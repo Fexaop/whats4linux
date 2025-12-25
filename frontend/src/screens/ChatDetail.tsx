@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { FetchMessages, DownloadMedia, SendMessage, GetProfile } from "../../wailsjs/go/api/Api";
-import { mstore } from "../../wailsjs/go/models";
+import { store } from "../../wailsjs/go/models";
 import { EventsOn } from "../../wailsjs/runtime/runtime";
 
 // WhatsApp-style markdown parser
@@ -69,7 +69,7 @@ interface ChatDetailProps {
 }
 
 export function ChatDetail({ chatId, chatName, chatAvatar, onBack }: ChatDetailProps) {
-    const [messages, setMessages] = useState<mstore.Message[]>([]);
+    const [messages, setMessages] = useState<store.Message[]>([]);
     const [inputText, setInputText] = useState("");
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -368,7 +368,7 @@ export function ChatDetail({ chatId, chatName, chatAvatar, onBack }: ChatDetailP
     );
 }
 
-function MediaContent({ message, type, chatId, sentMediaCache }: { message: mstore.Message, type: 'image' | 'video' | 'sticker' | 'audio' | 'document', chatId: string, sentMediaCache?: React.MutableRefObject<Map<string, string>> }) {
+function MediaContent({ message, type, chatId, sentMediaCache }: { message: store.Message, type: 'image' | 'video' | 'sticker' | 'audio' | 'document', chatId: string, sentMediaCache?: React.MutableRefObject<Map<string, string>> }) {
     const [mediaSrc, setMediaSrc] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -509,7 +509,7 @@ function QuotedMessage({ contextInfo }: { contextInfo: any }) {
     );
 }
 
-function MessageItem({ message, chatId, sentMediaCache }: { message: mstore.Message, chatId: string, sentMediaCache?: React.MutableRefObject<Map<string, string>> }) {
+function MessageItem({ message, chatId, sentMediaCache }: { message: store.Message, chatId: string, sentMediaCache?: React.MutableRefObject<Map<string, string>> }) {
     const isMe = message.Info.IsFromMe;
     const isTemp = message.Info.ID.startsWith("temp-");
     const isSticker = !!message.Content?.stickerMessage;
