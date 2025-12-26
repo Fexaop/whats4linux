@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from "react";
-import { FetchMessages, DownloadMedia, SendMessage, GetProfile, FetchContacts, GetContact } from "../../wailsjs/go/api/Api";
-import { store, types } from "../../wailsjs/go/models";
+import { FetchMessages, DownloadMedia, SendMessage, GetProfile, FetchContacts, GetContact, SendChatPresence } from "../../wailsjs/go/api/Api";
+import { api, store, types } from "../../wailsjs/go/models";
 import { EventsOn } from "../../wailsjs/runtime/runtime";
 
 // WhatsApp-style markdown parser
@@ -92,10 +92,36 @@ export function ChatDetail({ chatId, chatName, chatAvatar, onBack }: ChatDetailP
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     };
 
+    const [typingTimeout, setTypingTimeout] = useState<NodeJS.Timeout | null>(null);
+
     const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
         setInputText(e.target.value);
         adjustTextareaHeight();
+        
+        // Send composing presence
+        SendChatPresence(chatId, "composing", "").catch(() => {});
+        
+        // Clear existing timeout
+        if (typingTimeout) {
+            clearTimeout(typingTimeout);
+        }
+        
+        // Set new timeout to send paused presence after 1 seconds of no typing
+        const newTimeout = setTimeout(() => {
+            SendChatPresence(chatId, "paused", "").catch(() => {});
+        }, 1000);
+        
+        setTypingTimeout(newTimeout);
     };
+
+    // Cleanup timeout on unmount
+    useEffect(() => {
+        return () => {
+            if (typingTimeout) {
+                clearTimeout(typingTimeout);
+            }
+        };
+    }, [typingTimeout]);
 
     const adjustTextareaHeight = () => {
         const textarea = textareaRef.current;

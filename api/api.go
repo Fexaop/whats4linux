@@ -597,3 +597,11 @@ func (a *Api) SetCustomJS(js string) error {
 func (a *Api) Reinitialize() error {
 	return a.cw.Initialise(a.ctx, a.waClient)
 }
+
+func (a *Api) SendChatPresence(jid string, cp types.ChatPresence, cpm types.ChatPresenceMedia) error {
+	parsedJid, err := types.ParseJID(jid)
+	if err != nil {
+		return err
+	}
+	return a.waClient.SendChatPresence(a.ctx, parsedJid, cp, cpm)
+}
