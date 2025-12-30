@@ -65,15 +65,15 @@ export function ChatDetail({ chatId, chatName, chatAvatar, onBack }: ChatDetailP
     setTypingIndicator(chatId, true)
 
     // Send composing presence
-    SendChatPresence(chatId, "composing", "").catch(() => {});
+    SendChatPresence(chatId, "composing", "").catch(() => {})
 
     // Clear existing timeout
     if (typingTimeout) {
-      clearTimeout(typingTimeout);
+      clearTimeout(typingTimeout)
     }
 
     const timeout = setTimeout(() => {
-      SendChatPresence(chatId, "paused", "").catch(() => {});
+      SendChatPresence(chatId, "paused", "").catch(() => {})
       setTypingIndicator(chatId, false)
     }, 1000)
 
