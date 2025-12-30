@@ -175,8 +175,7 @@ export function MessageItem({ message, chatId, sentMediaCache }: MessageItemProp
   }
 
   return (
-    <div className={clsx("flex mb-2", isFromMe ? "justify-end" : "justify-start")}>
-    <div className={`flex ${isFromMe ? "justify-end" : "justify-start"} mb-2 group`}>
+    <div className={clsx("flex mb-2 group", isFromMe ? "justify-end" : "justify-start")}>
       <div
         className={clsx("max-w-[75%] rounded-lg p-2 shadow-sm relative", {
           "bg-transparent shadow-none": isSticker,
