@@ -2,7 +2,10 @@ import React, { useEffect, useRef, useState, useCallback } from "react"
 import { gsap } from "gsap"
 import { CustomEase } from "gsap/CustomEase"
 import { PathEditor } from "gsap/utils/PathEditor"
+import { useEaseStore } from "../../store"
+import ToggleButton from "./ToggleButton"
 import DropDown from "./DropDown"
+import { DEFAULT_EASES } from "../../theme.config"
 
 gsap.registerPlugin(CustomEase, PathEditor)
 
@@ -25,8 +28,19 @@ const PRESETS: Record<string, string> = {
 const INITIAL_GRID_PATH = PRESETS["power2.out"]
 const INITIAL_EASE_STRING = "M0,0,C0.126,0.382,0.282,0.674,0.44,0.822,0.632,1.002,0.818,1.001,1,1"
 
+const COMPONENTS = {
+  DropDown: ["open", "close", "rotate"],
+  ToggleButton: ["slide"],
+} as const
+
 const GSAPMasterVisualizer = () => {
+  const [component, setComponent] = useState<keyof typeof COMPONENTS | null>(null)
+  const [prop, setProp] = useState<string | null>(null)
+
+  const { eases, updateEase } = useEaseStore()
+
   const [easeString, setEaseString] = useState(INITIAL_EASE_STRING)
+  const [dirty, setDirty] = useState(false)
   const [isInvalid, setIsInvalid] = useState(false)
   const duration = 2.5
 
@@ -40,13 +54,19 @@ const GSAPMasterVisualizer = () => {
   const tweenRef = useRef<gsap.core.Tween | null>(null)
   const editorRef = useRef<any>(null)
 
-  const updateEase = useCallback(() => {
+  // load stored ease when selection changes
+  useEffect(() => {
+    if (component && prop) {
+      setEaseString((eases as any)[component][prop])
+      setDirty(false)
+    }
+  }, [component, prop, eases])
+
+  const refreshPreviewEase = useCallback(() => {
     if (!editorRef.current || !jointRef.current) return
 
     let errored = false
-    const onError = () => {
-      errored = true
-    }
+    const onError = () => (errored = true)
 
     let normalized: string
     try {
@@ -59,12 +79,14 @@ const GSAPMasterVisualizer = () => {
     setIsInvalid(errored)
     setEaseString(normalized)
 
-    if (errored) {
-      return
-    }
+    if (!errored) setDirty(true)
+
+    if (errored) return
 
     tweenRef.current?.kill()
+
     const newEase = CustomEase.create(`liveEase_${Date.now()}`, normalized)
+
     gsap.set(jointRef.current, { attr: { cy: 500 } })
 
     tweenRef.current = gsap.to(jointRef.current, {
@@ -77,12 +99,12 @@ const GSAPMasterVisualizer = () => {
         const cy = gsap.getProperty(jointRef.current, "cy") as number
         const value = 500 - cy
 
-        if (progressTextRef.current) progressTextRef.current.textContent = p.toFixed(2)
-        if (valueTextRef.current) valueTextRef.current.textContent = Math.round(value).toString()
-        if (horizontalFillRef.current) gsap.set(horizontalFillRef.current, { scaleX: p })
+        progressTextRef.current!.textContent = p.toFixed(2)
+        valueTextRef.current!.textContent = Math.round(value).toString()
+        gsap.set(horizontalFillRef.current, { scaleX: p })
       },
     })
-  }, [duration])
+  }, [duration, component, prop, updateEase])
 
   const handlePresetChange = useCallback(
     (name: string) => {
@@ -95,17 +117,18 @@ const GSAPMasterVisualizer = () => {
         ease: "power2.inOut",
         onComplete: () => {
           editorRef.current?.init()
-          updateEase()
+          refreshPreviewEase()
         },
       })
     },
-    [updateEase],
+    [refreshPreviewEase],
   )
 
   useEffect(() => {
     if (!mainPathRef.current || !jointRef.current) return
 
     gsap.set(jointRef.current, { attr: { cx: 500, cy: 500 } })
+
     const initialEase = CustomEase.create("initial", INITIAL_EASE_STRING)
 
     tweenRef.current = gsap.to(jointRef.current, {
@@ -118,9 +141,9 @@ const GSAPMasterVisualizer = () => {
         const cy = gsap.getProperty(jointRef.current, "cy") as number
         const value = 500 - cy
 
-        if (progressTextRef.current) progressTextRef.current.textContent = p.toFixed(2)
-        if (valueTextRef.current) valueTextRef.current.textContent = Math.round(value).toString()
-        if (horizontalFillRef.current) gsap.set(horizontalFillRef.current, { scaleX: p })
+        progressTextRef.current!.textContent = p.toFixed(2)
+        valueTextRef.current!.textContent = Math.round(value).toString()
+        gsap.set(horizontalFillRef.current, { scaleX: p })
       },
     })
 
@@ -141,7 +164,6 @@ const GSAPMasterVisualizer = () => {
         if (p.x < 0) p.x = 0
         if (p.x > 500) p.x = 500
       },
-
       onPress: () => tweenRef.current?.pause(),
       onRelease: () => tweenRef.current?.resume(),
     })
@@ -153,10 +175,74 @@ const GSAPMasterVisualizer = () => {
       tweenRef.current?.kill()
       editorRef.current?.kill()
     }
-  }, [updateEase])
+  }, [])
 
   return (
-    <div className="flex flex-col lg:flex-row gap-8 p-10 bg-[#0e100f] min-h-screen text-[#bbbaa6] font-mono select-none">
+    <div className="flex gap-8 p-10 bg-[#0e100f] min-h-screen text-[#bbbaa6] font-mono select-none">
+      {/* LEFT — picker */}
+      <div className="w-1/4 space-y-6">
+        <DropDown
+          title="Component"
+          elements={Object.keys(COMPONENTS)}
+          onToggle={v => {
+            setComponent(v as any)
+            setProp(null)
+          }}
+          placeholder="Pick component"
+        />
+
+        {component && (
+          <DropDown
+            title="Animation"
+            elements={[...COMPONENTS[component]]}
+            onToggle={v => setProp(v)}
+            placeholder="Pick animation"
+          />
+        )}
+
+        <DropDown
+          title="Presets"
+          elements={Object.keys(PRESETS)}
+          onToggle={handlePresetChange}
+          placeholder="power2.out"
+        />
+
+        {component && (
+          <div className="flex flex-col gap-2">
+            <button
+              disabled={!dirty || !component || !prop}
+              className="py-2 rounded bg-emerald-600 disabled:opacity-40"
+              onClick={() => {
+                if (!component || !prop) return
+                ;(updateEase as (g: string, a: string, e: string) => Promise<void>)(
+                  component,
+                  prop,
+                  easeString,
+                )
+
+                setDirty(false)
+              }}
+            >
+              Save Changes
+            </button>
+
+            <button
+              disabled={!prop}
+              className="py-2 rounded bg-zinc-800 disabled:opacity-40"
+              onClick={() => {
+                if (!component || !prop) return
+                const def = (DEFAULT_EASES as any)[component][prop]
+                setEaseString(def)
+                setDirty(true)
+              }}
+            >
+              Reset to Default
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* MIDDLE — your editor */}
       <div className="flex-1 space-y-6">
         <div className="relative aspect-square bg-black border border-[#42433d] p-12 overflow-visible shadow-2xl">
           <div className="absolute inset-0 pointer-events-none text-lg uppercase tracking-widest text-[#7c7c6f]">
@@ -205,7 +291,6 @@ const GSAPMasterVisualizer = () => {
               }}
             />
 
-            {/* Optional vertical guide line */}
             <line x1="500" y1="0" x2="500" y2="500" stroke="#222" strokeWidth="1" opacity="0.5" />
 
             <circle
@@ -225,32 +310,17 @@ const GSAPMasterVisualizer = () => {
             <div ref={horizontalFillRef} className="h-full bg-[#0ae448] scale-x-0 origin-left" />
           </div>
         </div>
-        <div className="w-64">
-          <DropDown
-            title="PRESETS"
-            elements={Object.keys(PRESETS)}
-            onToggle={handlePresetChange}
-            placeholder="power2.out"
-          />
-        </div>
       </div>
 
-      <div className="w-full lg:w-112.5 space-y-4 pt-16">
-        <div className="p-6 bg-black border border-[#42433d] rounded-lg text-[13px] text-white">
-          <div className="text-[#7c7c6f] italic mb-3"></div>
-          <p className="break-all leading-relaxed">
-            <span className="text-[#0ae448]">CustomEase</span>.create(
-            <span className="text-[#9d95ff]">"custom"</span>,
-            <span
-              className={
-                isInvalid ? "text-red-500 underline decoration-wavy mx-1" : "text-[#fec5fb] mx-1"
-              }
-            >
-              "{easeString}"
-            </span>
-            );
-          </p>
-        </div>
+      {/* RIGHT — preview */}
+      <div className="w-1/4 flex items-center justify-center">
+        {!component && <div className="opacity-40 text-sm">Pick something to preview</div>}
+
+        {component === "ToggleButton" && <ToggleButton isEnabled={true} onToggle={() => {}} />}
+
+        {component === "DropDown" && (
+          <DropDown title="Preview" elements={["One", "Two"]} onToggle={() => {}} />
+        )}
       </div>
     </div>
   )
