@@ -7,7 +7,7 @@ import (
 	"log"
 	"sort"
 
-	"github.com/lugvitc/whats4linux/internal/db"
+	query "github.com/lugvitc/whats4linux/internal/db"
 	"github.com/lugvitc/whats4linux/internal/misc"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
@@ -78,6 +78,50 @@ func (ms *MessageStore) ProcessMessageEvent(msg *events.Message) {
 func (ms *MessageStore) GetMessages(jid types.JID) []Message {
 	ml, _ := ms.msgMap.Get(jid)
 	return ml
+}
+
+// GetMessagesPaged returns a page of messages for a chat
+// beforeTimestamp: only return messages before this timestamp (0 = latest)
+// limit: max number of messages to return
+// Returns messages in chronological order (oldest first within the page)
+func (ms *MessageStore) GetMessagesPaged(jid types.JID, beforeTimestamp int64, limit int) []Message {
+	ml, ok := ms.msgMap.Get(jid)
+	if !ok || len(ml) == 0 {
+		return nil
+	}
+
+	// If beforeTimestamp is 0, get the latest messages
+	if beforeTimestamp == 0 {
+		start := len(ml) - limit
+		if start < 0 {
+			start = 0
+		}
+		return ml[start:]
+	}
+
+	// Find messages before the timestamp
+	var result []Message
+	for i := len(ml) - 1; i >= 0 && len(result) < limit; i-- {
+		if ml[i].Info.Timestamp.Unix() < beforeTimestamp {
+			result = append(result, ml[i])
+		}
+	}
+
+	// Reverse to get chronological order
+	for i, j := 0, len(result)-1; i < j; i, j = i+1, j-1 {
+		result[i], result[j] = result[j], result[i]
+	}
+
+	return result
+}
+
+// GetTotalMessageCount returns the total number of messages in a chat
+func (ms *MessageStore) GetTotalMessageCount(jid types.JID) int {
+	ml, ok := ms.msgMap.Get(jid)
+	if !ok {
+		return 0
+	}
+	return len(ml)
 }
 
 func (ms *MessageStore) GetMessage(chatJID types.JID, messageID string) *Message {
