@@ -1,19 +1,20 @@
 import { useEffect, useState } from "react"
-import { GetProfile } from "../../../wailsjs/go/api/Api"
 import { parseWhatsAppMarkdown } from "../../utils/markdown"
+import { useContactStore } from "../../store/useContactStore"
 
 export function QuotedMessage({ contextInfo }: { contextInfo: any }) {
   const [name, setName] = useState<string>("")
+  const getContactName = useContactStore(state => state.getContactName)
   const quoted = contextInfo.quotedMessage || contextInfo.QuotedMessage
 
   useEffect(() => {
     const participant = contextInfo.participant || contextInfo.Participant
     if (participant) {
-      GetProfile(participant).then((contact: any) => {
-        setName(contact.full_name || contact.push_name || contact.jid)
+      getContactName(participant).then((contactName: string) => {
+        if (contactName) setName(contactName)
       })
     }
-  }, [contextInfo])
+  }, [contextInfo, getContactName])
 
   if (!quoted) return null
 
