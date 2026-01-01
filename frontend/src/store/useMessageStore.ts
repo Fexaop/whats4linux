@@ -96,7 +96,7 @@ export const useMessageStore = create<MessageStore>((set, get) => ({
     set(state => {
       const existing = state.messages[chatId] || []
       if (existing.length <= keepCount) return state
-      
+
       return {
         messages: {
           ...state.messages,
