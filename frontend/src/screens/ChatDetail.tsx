@@ -22,8 +22,15 @@ const PAGE_SIZE = 50
 const START_INDEX = 100000
 
 export function ChatDetail({ chatId, chatName, chatAvatar, onBack }: ChatDetailProps) {
-  const { messages, setMessages, updateMessage, prependMessages, setActiveChatId } =
-    useMessageStore()
+  const {
+    messages,
+    setMessages,
+    updateMessage,
+    prependMessages,
+    setActiveChatId,
+    addPendingMessage,
+    updatePendingMessageToSent,
+  } = useMessageStore()
   const { setTypingIndicator, showEmojiPicker, setShowEmojiPicker } = useUIStore()
 
   const chatMessages = messages[chatId] || []
@@ -143,10 +150,100 @@ export function ChatDetail({ chatId, chatName, chatAvatar, onBack }: ChatDetailP
     const fileTypeToSend = selectedFileType
     const quotedMessageId = replyingTo?.Info.ID
 
+    // Generate a temporary ID for optimistic update
+    const tempId = `temp-${Date.now()}-${Math.random()}`
+
+    // Create pending message
+    const pendingMessage: any = {
+      tempId,
+      isPending: true,
+      Info: {
+        ID: tempId,
+        IsFromMe: true,
+        Timestamp: new Date().toISOString(),
+        PushName: "You",
+        Sender: "",
+      },
+      Content: {},
+    }
+
+    // Set content based on message type
+    if (imageToSend) {
+      pendingMessage.Content = {
+        imageMessage: {
+          caption: textToSend || "",
+          mimetype: "image/png",
+        },
+      }
+    } else if (fileToSend) {
+      if (fileTypeToSend === "video") {
+        pendingMessage.Content = {
+          videoMessage: {
+            caption: textToSend || "",
+            mimetype: fileToSend.type,
+          },
+        }
+      } else if (fileTypeToSend === "audio") {
+        pendingMessage.Content = {
+          audioMessage: {
+            mimetype: fileToSend.type,
+          },
+        }
+      } else {
+        pendingMessage.Content = {
+          documentMessage: {
+            caption: textToSend || "",
+            fileName: fileToSend.name,
+            mimetype: fileToSend.type,
+          },
+        }
+      }
+    } else {
+      pendingMessage.Content = {
+        conversation: textToSend,
+      }
+    }
+
+    // Add quoted message if replying
+    if (quotedMessageId && replyingTo) {
+      const contextInfo = {
+        quotedMessage: replyingTo.Content,
+        participant: replyingTo.Info.Sender,
+        stanzaId: replyingTo.Info.ID,
+      }
+
+      if (pendingMessage.Content.conversation) {
+        pendingMessage.Content = {
+          extendedTextMessage: {
+            text: pendingMessage.Content.conversation,
+            contextInfo,
+          },
+        }
+        delete pendingMessage.Content.conversation
+      } else if (pendingMessage.Content.imageMessage) {
+        pendingMessage.Content.imageMessage.contextInfo = contextInfo
+      } else if (pendingMessage.Content.videoMessage) {
+        pendingMessage.Content.videoMessage.contextInfo = contextInfo
+      } else if (pendingMessage.Content.audioMessage) {
+        pendingMessage.Content.audioMessage.contextInfo = contextInfo
+      } else if (pendingMessage.Content.documentMessage) {
+        pendingMessage.Content.documentMessage.contextInfo = contextInfo
+      }
+    }
+
+    // Add pending message to store immediately
+    addPendingMessage(chatId, pendingMessage)
+
+    // Clear input
     setInputText("")
     setPastedImage(null)
     setSelectedFile(null)
     setReplyingTo(null)
+
+    // Scroll to bottom to show the new message
+    requestAnimationFrame(() => {
+      scrollToBottom(false)
+    })
 
     try {
       if (imageToSend) {
@@ -174,6 +271,7 @@ export function ChatDetail({ chatId, chatName, chatAvatar, onBack }: ChatDetailP
       }
     } catch (err) {
       console.error("Failed to send:", err)
+      // Optionally, mark message as failed or remove it
     }
   }
 
@@ -185,7 +283,22 @@ export function ChatDetail({ chatId, chatName, chatAvatar, onBack }: ChatDetailP
   useEffect(() => {
     const unsub = EventsOn("wa:new_message", (data: { chatId: string; message: store.Message }) => {
       if (data?.chatId === chatId) {
-        updateMessage(data.chatId, data.message)
+        // Check if this message replaces a pending message
+        const currentMessages = messages[chatId] || []
+        const hasPendingMessage = currentMessages.some((m: any) => m.isPending)
+
+        if (hasPendingMessage && data.message.Info.IsFromMe) {
+          // Find and replace the most recent pending message
+          const pendingMessages = currentMessages.filter((m: any) => m.isPending)
+          if (pendingMessages.length > 0) {
+            const lastPending = pendingMessages[pendingMessages.length - 1]
+            updatePendingMessageToSent(data.chatId, lastPending.tempId, data.message)
+          } else {
+            updateMessage(data.chatId, data.message)
+          }
+        } else {
+          updateMessage(data.chatId, data.message)
+        }
 
         requestAnimationFrame(() => {
           scrollToBottom(false)
@@ -194,7 +307,7 @@ export function ChatDetail({ chatId, chatName, chatAvatar, onBack }: ChatDetailP
     })
 
     return () => unsub()
-  }, [chatId, updateMessage, scrollToBottom])
+  }, [chatId, updateMessage, updatePendingMessageToSent, scrollToBottom, messages])
 
   useGSAP(() => {
     if (!scrollButtonRef.current) return

@@ -7,6 +7,7 @@ import { QuotedMessage } from "./QuotedMessage"
 import { ImagePreview } from "./ImagePreview"
 import clsx from "clsx"
 import { MessageMenu } from "./MessageMenu"
+import { ClockPendingIcon, BlueTickIcon } from "../../assets/svgs/chat_icons"
 
 interface MessageItemProps {
   message: store.Message
@@ -27,6 +28,7 @@ export function MessageItem({ message, chatId, sentMediaCache, onReply }: Messag
   const isFromMe = message.Info.IsFromMe
   const content = message.Content
   const isSticker = !!content?.stickerMessage
+  const isPending = (message as any).isPending || false
   const [senderName, setSenderName] = useState(message.Info.PushName || "Unknown")
   const [showImagePreview, setShowImagePreview] = useState(false)
   const [previewImageSrc, setPreviewImageSrc] = useState("")
@@ -241,11 +243,14 @@ export function MessageItem({ message, chatId, sentMediaCache, onReply }: Messag
           )}
           {contextInfo?.quotedMessage && <QuotedMessage contextInfo={contextInfo} />}
           <div className="text-sm wrap-break-word whitespace-pre-wrap">{renderContent()}</div>
-          <div className="text-[10px] text-right opacity-50 mt-1">
-            {new Date(message.Info.Timestamp).toLocaleTimeString([], {
-              hour: "2-digit",
-              minute: "2-digit",
-            })}
+          <div className="text-[10px] text-right opacity-50 mt-1 flex items-center justify-end gap-1">
+            <span>
+              {new Date(message.Info.Timestamp).toLocaleTimeString([], {
+                hour: "2-digit",
+                minute: "2-digit",
+              })}
+            </span>
+            {isFromMe && (isPending ? <ClockPendingIcon /> : <BlueTickIcon />)}
           </div>
         </div>
       </div>
