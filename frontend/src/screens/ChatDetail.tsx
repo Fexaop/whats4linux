@@ -110,7 +110,7 @@ export function ChatDetail({ chatId, chatName, chatAvatar, onBack }: ChatDetailP
         setHasMore(false)
       }
     } catch (err) {
-        console.error("Load more failed:", err)
+      console.error("Load more failed:", err)
     } finally {
       setIsLoadingMore(false)
     }
@@ -173,7 +173,7 @@ export function ChatDetail({ chatId, chatName, chatAvatar, onBack }: ChatDetailP
         await SendMessage(chatId, { type: "text", text: textToSend, quotedMessageId })
       }
     } catch (err) {
-        console.error("Failed to send:", err)
+      console.error("Failed to send:", err)
     }
   }
 

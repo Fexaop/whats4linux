@@ -253,7 +253,7 @@ export function ChatListScreen({ onOpenSettings }: ChatListScreenProps) {
       const items = transformChatElements(chatElements)
       setChats(items)
     } catch (err) {
-            console.error("Error fetching chats:", err)
+      console.error("Error fetching chats:", err)
       if (mountedRef.current && USE_SAMPLE_DATA) {
         setChats(SAMPLE_CHATS)
       } else {
@@ -303,7 +303,7 @@ export function ChatListScreen({ onOpenSettings }: ChatListScreenProps) {
               onRefresh={fetchChats}
             />
           ) : (
-            filteredChats.map((chat) => (
+            filteredChats.map(chat => (
               <ChatListItem
                 key={chat.id}
                 chat={chat}

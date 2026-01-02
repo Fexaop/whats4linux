@@ -111,7 +111,7 @@ export const useAppSettingsStore = create<AppSettingsStore>((set, get) => ({
       const next = { ...state, [key]: value }
 
       SaveSettings(extractSettings(next)).catch(err => {
-                console.error("Failed to save setting:", err)
+        console.error("Failed to save setting:", err)
       })
 
       return next
@@ -140,7 +140,7 @@ export const useAppSettingsStore = create<AppSettingsStore>((set, get) => ({
       applyThemeColors(next.themeColors)
 
       // ⭐ persist
-            SaveSettings(extractSettings(next)).catch(console.error)
+      SaveSettings(extractSettings(next)).catch(console.error)
 
       return next
     })
