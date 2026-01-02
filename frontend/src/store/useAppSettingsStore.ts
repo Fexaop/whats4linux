@@ -98,8 +98,6 @@ export const useAppSettingsStore = create<AppSettingsStore>((set, get) => ({
         loaded: true,
       })
     } catch (err) {
-      console.error("Failed to load settings:", err)
-
       // fallback to defaults
       applyThemeColors(defaultSettings.themeColors)
       useEaseStore.setState({ eases: defaultSettings.eases })

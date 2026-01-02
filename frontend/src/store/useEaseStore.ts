@@ -31,7 +31,6 @@ export const useEaseStore = create<EaseStore>((set, get) => ({
       const { loaded, ...settings } = app
 
       SaveSettings({ ...settings, eases: next }).catch(console.error)
-
       return { eases: next }
     })
   },
