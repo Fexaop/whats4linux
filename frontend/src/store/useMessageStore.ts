@@ -12,6 +12,8 @@ interface MessageStore {
   updateMessage: (chatId: string, message: any) => void
   clearMessages: (chatId: string) => void
   trimOldMessages: (chatId: string, keepCount: number) => void
+  addPendingMessage: (chatId: string, message: any) => void
+  updatePendingMessageToSent: (chatId: string, tempId: string, message: any) => void
 }
 
 export const useMessageStore = create<MessageStore>()(
@@ -76,6 +78,31 @@ export const useMessageStore = create<MessageStore>()(
     clearMessages: chatId =>
       set(state => {
         delete state.messages[chatId]
+      }),
+
+    addPendingMessage: (chatId, message) =>
+      set(state => {
+        if (!state.messages[chatId]) state.messages[chatId] = []
+        state.messages[chatId].push(message)
+      }),
+
+    updatePendingMessageToSent: (chatId, tempId, message) =>
+      set(state => {
+        if (!state.messages[chatId]) return
+
+        const idx = state.messages[chatId].findIndex(m => m.tempId === tempId)
+
+        if (idx >= 0) {
+          state.messages[chatId][idx] = message
+        } else {
+          // Fallback: If tempId not found, use updateMessage logic
+          const existingIdx = state.messages[chatId].findIndex(m => m.Info?.ID === message.Info?.ID)
+          if (existingIdx >= 0) {
+            state.messages[chatId][existingIdx] = message
+          } else {
+            state.messages[chatId].push(message)
+          }
+        }
       }),
   })),
 )

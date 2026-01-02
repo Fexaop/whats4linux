@@ -220,12 +220,13 @@ export function ChatListScreen({ onOpenSettings }: ChatListScreenProps) {
   const transformChatElements = useCallback((chatElements: api.ChatElement[]): ChatItem[] => {
     return chatElements.map(c => {
       const isGroup = c.jid?.endsWith("@g.us") || false
+      const avatar = c.avatar_url || ""
       return {
         id: c.jid || "",
         name: c.full_name || c.push_name || c.short || c.jid || "Unknown",
         subtitle: c.latest_message || "",
         type: isGroup ? "group" : "contact",
-        avatar: c.avatar_url || "",
+        avatar: avatar,
       }
     })
   }, [])
