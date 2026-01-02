@@ -290,7 +290,7 @@ func (a *Api) GetChatList() ([]ChatElement, error) {
 		if avatarURL, err := a.GetCachedAvatar(cm.JID.String()); err == nil && avatarURL != "" {
 			fc.AvatarURL = avatarURL
 		} else {
-			log.Printf("FAILED: No avatar found for %s: %v", cm.JID.String(), err)
+			// log.Printf("FAILED: No avatar found for %s: %v", cm.JID.String(), err)
 		}
 
 		// todo: remove this later
