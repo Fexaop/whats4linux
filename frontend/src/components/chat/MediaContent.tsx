@@ -88,7 +88,7 @@ export function MediaContent({
             src={mediaSrc}
             className={
               type === "image"
-                ? "max-w-full rounded-lg cursor-pointer"
+                ? "block w-full max-w-82.5 max-h-100 object-cover rounded-lg cursor-pointer"
                 : "object-contain w-48.75 h-48.75"
             }
             alt="media"
