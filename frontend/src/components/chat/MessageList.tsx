@@ -1,23 +1,16 @@
 import { forwardRef, useImperativeHandle, useRef, useCallback, memo, useEffect } from "react"
 import { store } from "../../../wailsjs/go/models"
 import { MessageItem } from "./MessageItem"
-import clsx from "clsx"
 
 interface MessageListProps {
   chatId: string
   messages: store.Message[]
   sentMediaCache: React.MutableRefObject<Map<string, string>>
   onReply?: (message: store.Message) => void
-  onQuotedClick?: (messageId: string) => void
   onLoadMore?: () => void
-  onPrefetch?: () => void
-  onTrimOldMessages?: () => void
-  onRangeChanged?: (range: { startIndex: number; endIndex: number }) => void
   onAtBottomChange?: (atBottom: boolean) => void
-  firstItemIndex: number
   isLoading?: boolean
   hasMore?: boolean
-  highlightedMessageId?: string | null
 }
 
 export interface MessageListHandle {
@@ -33,42 +26,15 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     messages,
     sentMediaCache,
     onReply,
-    onQuotedClick,
     onLoadMore,
-    onPrefetch,
-    onTrimOldMessages,
-    onRangeChanged,
     onAtBottomChange,
-    firstItemIndex,
     isLoading,
     hasMore,
-    highlightedMessageId,
   },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement | null>(null)
-
-  const renderItem = useCallback(
-    (_: number, msg: store.Message) => {
-      const isHighlighted = highlightedMessageId === msg.Info?.ID
-      return (
-        <div
-          className={clsx("px-4 py-1 transition-colors duration-500", {
-            "bg-green-200/50 dark:bg-green-500/30": isHighlighted,
-          })}
-        >
-          <MemoizedMessageItem
-            message={msg}
-            chatId={chatId}
-            sentMediaCache={sentMediaCache}
-            onReply={onReply}
-            onQuotedClick={onQuotedClick}
-          />
-        </div>
-      )
-    },
-    [chatId, onReply, onQuotedClick, sentMediaCache, highlightedMessageId],
-  )
+  const minScrollTopRef = useRef<number>(Infinity)
 
   const scrollToBottom = useCallback((behavior: "auto" | "smooth" = "smooth") => {
     const el = containerRef.current
@@ -106,13 +72,24 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     }
   }, [])
 
+  useEffect(() => {
+    minScrollTopRef.current = Infinity
+  }, [messages.length])
+
   const onScroll = useCallback(
     (e: React.UIEvent<HTMLDivElement>) => {
       const el = e.currentTarget
+      
+      minScrollTopRef.current = Math.min(minScrollTopRef.current, el.scrollTop)
+      
       // Trigger load more when ~2 messages are left above viewport (assuming ~100px per message)
-      if (el.scrollTop <= 200 && !isLoading && hasMore && onLoadMore) {
+      // Check both current position and minimum reached to catch fast scrolling
+      if ((el.scrollTop <= 200 || minScrollTopRef.current <= 200) && !isLoading && hasMore && onLoadMore) {
         onLoadMore()
+        // Reset after triggering load
+        minScrollTopRef.current = Infinity
       }
+      
       const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 5
       onAtBottomChange?.(atBottom)
     },
