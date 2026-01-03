@@ -7,10 +7,12 @@ interface MessageListProps {
   messages: store.Message[]
   sentMediaCache: React.MutableRefObject<Map<string, string>>
   onReply?: (message: store.Message) => void
+  onQuotedClick?: (messageId: string) => void
   onLoadMore?: () => void
   onAtBottomChange?: (atBottom: boolean) => void
   isLoading?: boolean
   hasMore?: boolean
+  highlightedMessageId?: string | null
 }
 
 export interface MessageListHandle {
@@ -26,10 +28,12 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     messages,
     sentMediaCache,
     onReply,
+    onQuotedClick,
     onLoadMore,
     onAtBottomChange,
     isLoading,
     hasMore,
+    highlightedMessageId,
   },
   ref,
 ) {
@@ -115,6 +119,8 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
             chatId={chatId}
             sentMediaCache={sentMediaCache}
             onReply={onReply}
+            onQuotedClick={onQuotedClick}
+            highlightedMessageId={highlightedMessageId}
           />
         </div>
       ))}

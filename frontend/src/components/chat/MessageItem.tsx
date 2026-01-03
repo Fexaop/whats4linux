@@ -16,6 +16,7 @@ interface MessageItemProps {
   sentMediaCache: React.MutableRefObject<Map<string, string>>
   onReply?: (message: store.Message) => void
   onQuotedClick?: (messageId: string) => void
+  highlightedMessageId?: string | null
 }
 
 const formatSize = (bytes: number) => {
@@ -32,6 +33,7 @@ export function MessageItem({
   sentMediaCache,
   onReply,
   onQuotedClick,
+  highlightedMessageId,
 }: MessageItemProps) {
   const isFromMe = message.Info.IsFromMe
   // Debug: log every render and also when the message updates or unmounts
@@ -224,7 +226,9 @@ export function MessageItem({
           messageId={message.Info.ID}
         />
       )}
-      <div className={clsx("flex mb-2 group", isFromMe ? "justify-end" : "justify-start")}>
+      <div className={clsx("flex mb-2 group", isFromMe ? "justify-end" : "justify-start", {
+        "ring-2 ring-yellow-400": highlightedMessageId === message.Info.ID
+      })}>
         <div
           className={clsx("max-w-[75%] rounded-lg p-2 shadow-sm relative", {
             "bg-transparent shadow-none": isSticker,
