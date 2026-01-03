@@ -15,6 +15,7 @@ interface MessageItemProps {
   chatId: string
   sentMediaCache: React.MutableRefObject<Map<string, string>>
   onReply?: (message: store.Message) => void
+  onQuotedClick?: (messageId: string) => void
 }
 
 const formatSize = (bytes: number) => {
@@ -25,7 +26,13 @@ const formatSize = (bytes: number) => {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i]
 }
 
-export function MessageItem({ message, chatId, sentMediaCache, onReply }: MessageItemProps) {
+export function MessageItem({
+  message,
+  chatId,
+  sentMediaCache,
+  onReply,
+  onQuotedClick,
+}: MessageItemProps) {
   const isFromMe = message.Info.IsFromMe
   // Debug: log every render and also when the message updates or unmounts
   // console.log(`[MessageItem] render id=${message.Info.ID} fromMe=${isFromMe} chat=${chatId}`)
@@ -250,7 +257,9 @@ export function MessageItem({ message, chatId, sentMediaCache, onReply }: Messag
           {!isFromMe && chatId.endsWith("@g.us") && !isSticker && (
             <div className="text-[11px] font-semibold text-blue-500 mb-0.5">{senderName}</div>
           )}
-          {contextInfo?.quotedMessage && <QuotedMessage contextInfo={contextInfo} />}
+          {contextInfo?.quotedMessage && (
+            <QuotedMessage contextInfo={contextInfo} onQuotedClick={onQuotedClick} />
+          )}
           <div className="text-sm wrap-break-word whitespace-pre-wrap">{renderContent()}</div>
           <div className="text-[10px] text-right opacity-50 mt-1 flex items-center justify-end gap-1">
             <span>
