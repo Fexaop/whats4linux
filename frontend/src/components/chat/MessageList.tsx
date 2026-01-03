@@ -71,20 +71,17 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     [chatId, onReply, onQuotedClick, sentMediaCache, highlightedMessageId],
   )
 
-  const scrollToBottom = useCallback(
-    (behavior: "auto" | "smooth" = "smooth") => {
-      const el = containerRef.current
-      if (el) {
-        const top = el.scrollHeight - el.clientHeight
-        try {
-          el.scrollTo({ top, behavior })
-        } catch {
-          el.scrollTop = top
-        }
+  const scrollToBottom = useCallback((behavior: "auto" | "smooth" = "smooth") => {
+    const el = containerRef.current
+    if (el) {
+      const top = el.scrollHeight - el.clientHeight
+      try {
+        el.scrollTo({ top, behavior })
+      } catch {
+        el.scrollTop = top
       }
-    },
-    [],
-  )
+    }
+  }, [])
 
   const scrollToMessage = useCallback(
     (messageId: string) => {
@@ -143,7 +140,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
           <div className="animate-spin h-5 w-5 border-2 border-green-500 rounded-full border-t-transparent" />
         ) : null}
       </div>
-      {messages.map((msg) => (
+      {messages.map(msg => (
         <div key={msg.Info.ID} className="px-4 py-1">
           <MemoizedMessageItem
             message={msg}
