@@ -2,12 +2,12 @@ import { useEffect, useState } from "react"
 import { parseWhatsAppMarkdown } from "../../utils/markdown"
 import { useContactStore } from "../../store/useContactStore"
 
-export function QuotedMessage({ 
-  contextInfo, 
-  onQuotedClick 
-}: { 
+export function QuotedMessage({
+  contextInfo,
+  onQuotedClick,
+}: {
   contextInfo: any
-  onQuotedClick?: (messageId: string) => void 
+  onQuotedClick?: (messageId: string) => void
 }) {
   const [name, setName] = useState<string>("")
   const getContactName = useContactStore(state => state.getContactName)
@@ -44,7 +44,7 @@ export function QuotedMessage({
   }
 
   return (
-    <div 
+    <div
       className="bg-black/5 dark:bg-white/10 rounded-md p-2 mb-2 border-l-4 border-green-500 text-xs cursor-pointer hover:bg-black/10 dark:hover:bg-white/15 transition-colors"
       onClick={handleClick}
     >

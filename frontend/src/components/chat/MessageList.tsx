@@ -54,9 +54,11 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     (_: number, msg: store.Message) => {
       const isHighlighted = highlightedMessageId === msg.Info?.ID
       return (
-        <div className={clsx("px-4 py-1 transition-colors duration-500", {
-          "bg-green-200/50 dark:bg-green-500/30": isHighlighted,
-        })}>
+        <div
+          className={clsx("px-4 py-1 transition-colors duration-500", {
+            "bg-green-200/50 dark:bg-green-500/30": isHighlighted,
+          })}
+        >
           <MemoizedMessageItem
             message={msg}
             chatId={chatId}
@@ -86,7 +88,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
   const scrollToMessage = useCallback(
     (messageId: string) => {
       if (!virtuosoRef.current) return
-      
+
       const messageIndex = messages.findIndex(m => m.Info?.ID === messageId)
       if (messageIndex >= 0) {
         virtuosoRef.current.scrollToIndex({

@@ -75,7 +75,7 @@ export function ChatDetail({ chatId, chatName, chatAvatar, onBack }: ChatDetailP
   const handleQuotedClick = useCallback((messageId: string) => {
     messageListRef.current?.scrollToMessage(messageId)
     setHighlightedMessageId(messageId)
-    
+
     setTimeout(() => {
       setHighlightedMessageId(null)
     }, 500)

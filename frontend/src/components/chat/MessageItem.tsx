@@ -25,7 +25,13 @@ const formatSize = (bytes: number) => {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i]
 }
 
-export function MessageItem({ message, chatId, sentMediaCache, onReply, onQuotedClick }: MessageItemProps) {
+export function MessageItem({
+  message,
+  chatId,
+  sentMediaCache,
+  onReply,
+  onQuotedClick,
+}: MessageItemProps) {
   const isFromMe = message.Info.IsFromMe
   const content = message.Content
   const isSticker = !!content?.stickerMessage
