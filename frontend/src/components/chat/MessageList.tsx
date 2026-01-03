@@ -79,17 +79,22 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
   const onScroll = useCallback(
     (e: React.UIEvent<HTMLDivElement>) => {
       const el = e.currentTarget
-      
+
       minScrollTopRef.current = Math.min(minScrollTopRef.current, el.scrollTop)
-      
+
       // Trigger load more when ~2 messages are left above viewport (assuming ~100px per message)
       // Check both current position and minimum reached to catch fast scrolling
-      if ((el.scrollTop <= 200 || minScrollTopRef.current <= 200) && !isLoading && hasMore && onLoadMore) {
+      if (
+        (el.scrollTop <= 200 || minScrollTopRef.current <= 200) &&
+        !isLoading &&
+        hasMore &&
+        onLoadMore
+      ) {
         onLoadMore()
         // Reset after triggering load
         minScrollTopRef.current = Infinity
       }
-      
+
       const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 5
       onAtBottomChange?.(atBottom)
     },

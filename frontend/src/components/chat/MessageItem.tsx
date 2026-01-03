@@ -226,9 +226,11 @@ export function MessageItem({
           messageId={message.Info.ID}
         />
       )}
-      <div className={clsx("flex mb-2 group", isFromMe ? "justify-end" : "justify-start", {
-        "ring-2 ring-yellow-400": highlightedMessageId === message.Info.ID
-      })}>
+      <div
+        className={clsx("flex mb-2 group", isFromMe ? "justify-end" : "justify-start", {
+          "ring-2 ring-yellow-400": highlightedMessageId === message.Info.ID,
+        })}
+      >
         <div
           className={clsx("max-w-[75%] rounded-lg p-2 shadow-sm relative", {
             "bg-transparent shadow-none": isSticker,
