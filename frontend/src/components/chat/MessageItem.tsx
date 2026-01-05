@@ -116,13 +116,12 @@ export function MessageItem({
     }
   }, [message.Info.Sender, chatId, isFromMe])
 
-
   // Render markdown
   useEffect(() => {
     const textContent = content?.conversation || content?.extendedTextMessage?.text
     if (textContent) {
       RenderMarkdown(textContent)
-        .then((html) => setRenderedMarkdown(html))
+        .then(html => setRenderedMarkdown(html))
         .catch(() => setRenderedMarkdown(textContent))
     }
   }, [content?.conversation, content?.extendedTextMessage?.text])
@@ -134,7 +133,7 @@ export function MessageItem({
       content?.documentMessage?.caption
     if (caption) {
       RenderMarkdown(caption)
-        .then((html) => setRenderedCaptionMarkdown(html))
+        .then(html => setRenderedCaptionMarkdown(html))
         .catch(() => setRenderedCaptionMarkdown(caption))
     }
   }, [
@@ -159,8 +158,7 @@ export function MessageItem({
       ) : (
         <>{content.conversation || content.extendedTextMessage?.text}</>
       )
-    }
-    else if (content.imageMessage)
+    } else if (content.imageMessage)
       return (
         <div className="flex flex-col">
           <MediaContent

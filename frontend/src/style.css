@@ -156,16 +156,16 @@ body {
 }
 
 .inline-code {
-  background-color: #103E2C;
+  background-color: #103e2c;
   opacity: 70%;
   padding: 2px 4px;
   border-radius: 4px;
-  font-family: 'Courier New', Courier, monospace;
+  font-family: "Courier New", Courier, monospace;
   font-size: 90%;
 }
 
 blockquote {
-  border-left: 4px solid #A1B8AF;
+  border-left: 4px solid #a1b8af;
   margin-left: 0px;
   margin-right: 0;
   padding-left: 10px;
