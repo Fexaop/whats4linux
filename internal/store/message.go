@@ -693,8 +693,8 @@ func InsertMessage(msg *Message) error {
 		return AddReactionToMessage(targetID, reaction, senderJID)
 	}
 
-	var msgType uint8 = query.MessageTypeText
-	var mediaType string
+	var msgType query.MessageType = query.MessageTypeText
+	var mediaType query.MediaType
 	var text string
 	var mentions string
 
@@ -716,23 +716,23 @@ func InsertMessage(msg *Message) error {
 		switch {
 		case msg.Content.GetImageMessage() != nil:
 			msgType = query.MessageTypeImage
-			mediaType = msg.Content.GetImageMessage().GetMimetype()
+			mediaType = query.MediaTypeImage
 			text = "image"
 		case msg.Content.GetVideoMessage() != nil:
 			msgType = query.MessageTypeVideo
-			mediaType = msg.Content.GetVideoMessage().GetMimetype()
+			mediaType = query.MediaTypeVideo
 			text = "video"
 		case msg.Content.GetAudioMessage() != nil:
 			msgType = query.MessageTypeAudio
-			mediaType = msg.Content.GetAudioMessage().GetMimetype()
+			mediaType = query.MediaTypeAudio
 			text = "audio"
 		case msg.Content.GetDocumentMessage() != nil:
 			msgType = query.MessageTypeDocument
-			mediaType = msg.Content.GetDocumentMessage().GetMimetype()
+			mediaType = query.MediaTypeDocument
 			text = "document"
 		case msg.Content.GetStickerMessage() != nil:
 			msgType = query.MessageTypeSticker
-			mediaType = msg.Content.GetStickerMessage().GetMimetype()
+			mediaType = query.MediaTypeSticker
 			text = "sticker"
 		default:
 			text = "message"
@@ -763,7 +763,7 @@ func UpdateMessage(msg *Message) error {
 	}
 	defer db.Close()
 
-	var msgType uint8 = query.MessageTypeText
+	var msgType query.MessageType = query.MessageTypeText
 	var text string
 
 	if msg.Content.GetConversation() != "" {

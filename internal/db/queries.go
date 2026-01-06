@@ -1,15 +1,6 @@
 package query
 
 const (
-	// Message types
-	MessageTypeText     uint8 = 1
-	MessageTypeImage    uint8 = 2
-	MessageTypeVideo    uint8 = 3
-	MessageTypeAudio    uint8 = 4
-	MessageTypeDocument uint8 = 5
-	MessageTypeSticker  uint8 = 6
-	MessageTypeContact  uint8 = 7
-
 	CreateGroupsTable = `
 	CREATE TABLE IF NOT EXISTS whats4linux_groups (
 		jid TEXT PRIMARY KEY,
@@ -175,7 +166,7 @@ const (
 		is_from_me BOOLEAN NOT NULL,
 		type INTEGER NOT NULL,
 		text TEXT,
-		media_type TEXT,
+		media_type INTEGER,
 		reply_to_message_id TEXT,
 		mentions TEXT,
 		edited BOOLEAN DEFAULT FALSE
