@@ -731,6 +731,13 @@ func (a *Api) mainEventHandler(evt any) {
 			log.Println("Migration completed successfully")
 			runtime.EventsEmit(a.ctx, "wa:chat_list_refresh")
 		}
+		// Run migration for messages.db
+		err = store.MigrateLIDToPNForMessagesDB(a.ctx, a.waClient.Store.LIDs)
+		if err != nil {
+			log.Println("Messages DB migration failed:", err)
+		} else {
+			log.Println("Messages DB migration completed successfully")
+		}
 	case *events.Disconnected:
 		a.waClient.SendPresence(a.ctx, types.PresenceUnavailable)
 

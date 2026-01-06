@@ -23,7 +23,7 @@ type Message struct {
 	Info      types.MessageInfo
 	Content   *waE2E.Message
 	Edited    bool
-	Reactions string // JSON string of reactions: [{"reaction": "👍", "senderJID": "1234@s.whatsapp.net"}]
+	Reactions string
 }
 
 const MaxMessageCacheSize = 50
@@ -553,6 +553,87 @@ func (ms *MessageStore) MigrateLIDToPN(ctx context.Context, sd store.LIDStore) e
 		}
 		return nil
 	})
+}
+
+func MigrateLIDToPNForMessagesDB(ctx context.Context, sd store.LIDStore) error {
+	log.Println("Starting LID to PN migration for messages.db...")
+
+	db, err := sql.Open("sqlite3", misc.GetSQLiteAddress("messages.db"))
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	log.Println("Fetching all messages for migration...")
+	defer log.Println("Migration task completed.")
+
+	rows, err := db.Query(query.SelectAllMessagesJIDs)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	stmtUpdate, err := db.Prepare(query.UpdateMessageJIDs)
+	if err != nil {
+		return err
+	}
+	defer stmtUpdate.Close()
+
+	var (
+		messageID string
+		chatJIDStr string
+		senderJIDStr string
+		oC, oS string
+	)
+
+	for rows.Next() {
+		if err := rows.Scan(&messageID, &chatJIDStr, &senderJIDStr); err != nil {
+			continue
+		}
+
+		chatJID, err := types.ParseJID(chatJIDStr)
+		if err != nil {
+			log.Println("Failed to parse chat JID:", err)
+			continue
+		}
+
+		senderJID, err := types.ParseJID(senderJIDStr)
+		if err != nil {
+			log.Println("Failed to parse sender JID:", err)
+			continue
+		}
+
+		oC = chatJID.String()
+		oS = senderJID.String()
+
+		cc := updateCanonicalJID(ctx, sd, &chatJID)
+		sc := updateCanonicalJID(ctx, sd, &senderJID)
+
+		if !cc && !sc {
+			continue
+		}
+
+		_, err = stmtUpdate.Exec(
+			chatJID.String(),
+			senderJID.String(),
+			messageID,
+		)
+
+		if err != nil {
+			log.Println("Failed to update message during LID to PN migration:", err)
+			continue
+		}
+
+		if cc {
+			log.Printf("Migrated message %s chat from LID %s to PN %s\n",
+				messageID, oC, chatJID.String())
+		}
+		if sc {
+			log.Printf("Migrated message %s sender from LID %s to PN %s\n",
+				messageID, oS, senderJID.String())
+		}
+	}
+	return nil
 }
 
 func marshalMessageContent(msg *waE2E.Message) ([]byte, error) {

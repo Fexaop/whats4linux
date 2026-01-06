@@ -209,4 +209,16 @@ const (
 	SET reactions = ?
 	WHERE message_id = ?
 	`
+
+	// Migration queries for messages.db
+	SelectAllMessagesJIDs = `
+	SELECT message_id, chat_jid, sender_jid
+	FROM messages;
+	`
+
+	UpdateMessageJIDs = `
+	UPDATE messages
+	SET chat_jid = ?, sender_jid = ?
+	WHERE message_id = ?;
+	`
 )
