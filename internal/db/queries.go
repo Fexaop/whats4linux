@@ -176,6 +176,7 @@ const (
 		type INTEGER NOT NULL,
 		text TEXT,
 		media_type TEXT,
+		reply_to_message_id TEXT,
 		mentions TEXT,
 		edited BOOLEAN DEFAULT FALSE,
 		reactions TEXT
@@ -187,12 +188,12 @@ const (
 
 	InsertDecodedMessage = `
 	INSERT OR REPLACE INTO messages 
-	(message_id, chat_jid, sender_jid, timestamp, is_from_me, type, text, media_type, mentions, edited, reactions)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	(message_id, chat_jid, sender_jid, timestamp, is_from_me, type, text, media_type, reply_to_message_id, mentions, edited, reactions)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	SelectDecodedMessageByID = `
-	SELECT message_id, chat_jid, sender_jid, timestamp, is_from_me, type, text, media_type, mentions, edited, reactions
+	SELECT message_id, chat_jid, sender_jid, timestamp, is_from_me, type, text, media_type, reply_to_message_id, mentions, edited, reactions
 	FROM messages
 	WHERE message_id = ?
 	`

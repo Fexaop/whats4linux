@@ -599,11 +599,13 @@ func InsertMessage(msg *Message) error {
 	var reactions string
 
 	// Extract mentions if it's an extended text message
+	var replyToMessageID string
 	if msg.Content.GetExtendedTextMessage() != nil && msg.Content.GetExtendedTextMessage().GetContextInfo() != nil {
 		if mentioned := msg.Content.GetExtendedTextMessage().GetContextInfo().GetMentionedJID(); len(mentioned) > 0 {
 			mentionsBytes, _ := json.Marshal(mentioned)
 			mentions = string(mentionsBytes)
 		}
+		replyToMessageID = msg.Content.GetExtendedTextMessage().GetContextInfo().GetStanzaID()
 	}
 
 	if msg.Content.GetConversation() != "" {
@@ -646,6 +648,7 @@ func InsertMessage(msg *Message) error {
 		msgType,
 		text,
 		mediaType,
+		replyToMessageID,
 		mentions,
 		msg.Edited,
 		reactions,
@@ -707,17 +710,18 @@ func GetMessage(messageID string) (*Message, error) {
 	defer db.Close()
 
 	var (
-		id        string
-		chatJID   string
-		senderJID string
-		timestamp int64
-		isFromMe  bool
-		msgType   uint8
-		text      string
-		mediaType string
-		mentions  string
-		edited    bool
-		reactions string
+		id                string
+		chatJID           string
+		senderJID         string
+		timestamp         int64
+		isFromMe          bool
+		msgType           uint8
+		text              string
+		mediaType         string
+		replyToMessageID  string
+		mentions          string
+		edited            bool
+		reactions         string
 	)
 
 	err = db.QueryRow(query.SelectDecodedMessageByID, messageID).Scan(
@@ -729,6 +733,7 @@ func GetMessage(messageID string) (*Message, error) {
 		&msgType,
 		&text,
 		&mediaType,
+		&replyToMessageID,
 		&mentions,
 		&edited,
 		&reactions,
