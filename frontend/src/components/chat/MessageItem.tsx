@@ -121,13 +121,13 @@ export function MessageItem({
     const textContent = content?.conversation || content?.extendedTextMessage?.text
     const contextInfo = content?.extendedTextMessage?.contextInfo
     const mentionedJIDs = contextInfo?.mentionedJID || []
-    
+
     if (textContent) {
       RenderMarkdown(textContent, mentionedJIDs)
-        .then((html) => setRenderedMarkdown(html))
+        .then(html => setRenderedMarkdown(html))
         .catch(() => setRenderedMarkdown(textContent))
     }
-}, [content?.conversation, content?.extendedTextMessage])
+  }, [content?.conversation, content?.extendedTextMessage])
 
   useEffect(() => {
     const caption =
@@ -138,7 +138,7 @@ export function MessageItem({
     const mentionedJIDs = contextInfo?.mentionedJID || []
     if (caption) {
       RenderMarkdown(caption, mentionedJIDs)
-        .then((html) => setRenderedCaptionMarkdown(html))
+        .then(html => setRenderedCaptionMarkdown(html))
         .catch(() => setRenderedCaptionMarkdown(caption))
     }
   }, [
