@@ -1,8 +1,6 @@
 import React, { useState, useEffect } from "react"
 import { store } from "../../../wailsjs/go/models"
 import { DownloadImageToFile, GetContact, RenderMarkdown } from "../../../wailsjs/go/api/Api"
-// Temporarily disable markdown parsing
-// import { parseWhatsAppMarkdown } from "../../utils/markdown"
 import { MediaContent } from "./MediaContent"
 import { QuotedMessage } from "./QuotedMessage"
 import clsx from "clsx"
@@ -46,7 +44,7 @@ export function MessageItem({
   const content = message.Content
   const isSticker = !!content?.stickerMessage
   const isPending = (message as any).isPending || false
-  const [senderName, setSenderName] = useState(message.Info.PushName || "Unknown")
+  const [senderName, setSenderName] = useState("~ " + message.Info.PushName || "Unknown")
   const [renderedMarkdown, setRenderedMarkdown] = useState<string>("")
   const [renderedCaptionMarkdown, setRenderedCaptionMarkdown] = useState<string>("")
 
@@ -109,7 +107,7 @@ export function MessageItem({
       GetContact(message.Info.Sender)
         .then((contact: any) => {
           if (contact?.full_name || contact?.push_name) {
-            setSenderName(contact.full_name || contact.push_name)
+            setSenderName(contact.full_name || "~ " + contact.push_name)
           }
         })
         .catch(() => {})

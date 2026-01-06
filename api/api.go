@@ -985,10 +985,16 @@ func replaceMentions(text string, mentionedJIDs []string, a *Api) string {
 		if err != nil {
 			continue
 		}
+		if parsedJID.ActualAgent() == types.LIDDomain {
+			canonicalJID, err := a.waClient.Store.LIDs.GetPNForLID(a.ctx, parsedJID)
+			if err == nil {
+				parsedJID = canonicalJID
+			}
+		}
 		contact, _ := a.waClient.Store.Contacts.GetContact(a.ctx, parsedJID)
 		displayName := contact.FullName
 		if displayName == "" {
-			displayName = contact.PushName
+			displayName = "~" + contact.PushName
 		}
 		if displayName == "" {
 			displayName = parsedJID.User
@@ -1003,7 +1009,7 @@ func replaceMentions(text string, mentionedJIDs []string, a *Api) string {
 }
 
 func (a *Api) RenderMarkdown(md string, mentionedJIDs []string) string {
-	processed := markdown.ParseWithMentions(md)
+	processed := markdown.MarkdownLinesToHTML(md)
 	processed = replaceMentions(processed, mentionedJIDs, a)
 	return processed
 }

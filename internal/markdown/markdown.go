@@ -1,5 +1,6 @@
 package markdown
 
+// TODO :  URL parsing, triple backtick blocks
 import (
 	"html"
 	"strings"
@@ -42,7 +43,6 @@ func ParseInline(s string) string {
 	}
 
 	for i := 0; i < len(s); {
-
 		var matched string
 		for tok := range Tokens {
 			if strings.HasPrefix(s[i:], tok) {
@@ -90,7 +90,6 @@ func ParseInline(s string) string {
 		buf.WriteByte(s[i])
 		i++
 	}
-
 	if active != "" &&
 		lastClose > openPos &&
 		strings.TrimSpace(
@@ -112,13 +111,34 @@ func ParseInline(s string) string {
 	return out.String()
 }
 
+func isUnorderedList(line string) (bool, string) {
+	if len(line) < 3 {
+		return false, ""
+	}
+
+	switch line[0] {
+	case '-', '*':
+		if line[1] == ' ' && line[2] != ' ' {
+			return true, strings.TrimRight(line[2:], "\n")
+		}
+	}
+
+	return false, ""
+}
+
 // line parser (for quotes and lists[pending])
 func MarkdownLinesToHTML(s string) string {
 	lines := strings.Split(s, "\n")
 	var out strings.Builder
-	inQuote := false
 
-	close := func() {
+	inQuote := false
+	inUL := false
+
+	closeAll := func() {
+		if inUL {
+			out.WriteString("</ul>")
+			inUL = false
+		}
 		if inQuote {
 			out.WriteString("</blockquote>")
 			inQuote = false
@@ -129,9 +149,9 @@ func MarkdownLinesToHTML(s string) string {
 		line = strings.TrimRight(line, "\r")
 
 		// blockquote
-		if strings.HasPrefix(line, ">") {
+		if strings.HasPrefix(line, "> ") {
 			if !inQuote {
-				close()
+				closeAll()
 				out.WriteString("<blockquote>")
 				inQuote = true
 			}
@@ -139,8 +159,21 @@ func MarkdownLinesToHTML(s string) string {
 			continue
 		}
 
+		// unordered list
+		if ok, content := isUnorderedList(line); ok {
+			if !inUL {
+				closeAll()
+				out.WriteString("<ul>")
+				inUL = true
+			}
+			out.WriteString("<li>")
+			out.WriteString(ParseInline(content))
+			out.WriteString("</li>")
+			continue
+		}
+
 		// normal line
-		close()
+		closeAll()
 		if strings.TrimSpace(line) != "" {
 			out.WriteString("<p>")
 			out.WriteString(ParseInline(line))
@@ -148,12 +181,6 @@ func MarkdownLinesToHTML(s string) string {
 		}
 	}
 
-	close()
+	closeAll()
 	return out.String()
-}
-
-func ParseWithMentions(s string) string {
-
-	return MarkdownLinesToHTML(s)
-
 }
