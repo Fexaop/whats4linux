@@ -389,17 +389,17 @@ func GetMessageWithRaw(chatJID string, messageID string) (*Message, error) {
 	defer db.Close()
 
 	var (
-		id               string
-		chat             string
-		sender           string
-		timestamp        int64
-		isFromMe         bool
-		msgType          int
-		text             sql.NullString
-		mediaType        sql.NullInt64
-		replyTo          sql.NullString
-		mentions         sql.NullString
-		edited           bool
+		id        string
+		chat      string
+		sender    string
+		timestamp int64
+		isFromMe  bool
+		msgType   int
+		text      sql.NullString
+		mediaType sql.NullInt64
+		replyTo   sql.NullString
+		mentions  sql.NullString
+		edited    bool
 	)
 
 	err = db.QueryRow(query.SelectMessageWithRawByChatAndID, chatJID, messageID).Scan(
@@ -451,17 +451,17 @@ func GetMessageByIDWithRaw(messageID string) (*Message, error) {
 	defer db.Close()
 
 	var (
-		id               string
-		chat             string
-		sender           string
-		timestamp        int64
-		isFromMe         bool
-		msgType          int
-		text             sql.NullString
-		mediaType        sql.NullInt64
-		replyTo          sql.NullString
-		mentions         sql.NullString
-		edited           bool
+		id        string
+		chat      string
+		sender    string
+		timestamp int64
+		isFromMe  bool
+		msgType   int
+		text      sql.NullString
+		mediaType sql.NullInt64
+		replyTo   sql.NullString
+		mentions  sql.NullString
+		edited    bool
 	)
 
 	err = db.QueryRow(query.SelectMessageWithRawByID, messageID).Scan(
