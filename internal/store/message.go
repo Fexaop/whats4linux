@@ -54,8 +54,8 @@ type MessageStore struct {
 	db *sql.DB
 
 	// [chatJID.User] = ChatMessage
-	chatListMap misc.VMap[string, ChatMessage]
-	mCache      misc.VMap[string, uint8]
+	chatListMap   misc.VMap[string, ChatMessage]
+	mCache        misc.VMap[string, uint8]
 	reactionCache misc.VMap[string, map[string][]string]
 
 	stmtInsert *sql.Stmt
@@ -93,13 +93,13 @@ func NewMessageStore() (*MessageStore, error) {
 	}
 
 	ms := &MessageStore{
-		db:          db,
-		chatListMap: misc.NewVMap[string, ChatMessage](),
-		mCache:      misc.NewVMap[string, uint8](),
+		db:            db,
+		chatListMap:   misc.NewVMap[string, ChatMessage](),
+		mCache:        misc.NewVMap[string, uint8](),
 		reactionCache: misc.NewVMap[string, map[string][]string](),
-		stmtInsert:  stmtInsert,
-		stmtUpdate:  stmtUpdate,
-		writeCh:     make(chan writeJob, 100),
+		stmtInsert:    stmtInsert,
+		stmtUpdate:    stmtUpdate,
+		writeCh:       make(chan writeJob, 100),
 	}
 
 	go ms.runWriter()
@@ -685,7 +685,6 @@ func (ms *MessageStore) GetChatList() []ChatMessage {
 
 	return chatList
 }
-
 
 // GetReactionsByMessageID returns all reactions for a message
 func (ms *MessageStore) GetReactionsByMessageID(messageID string) ([]Reaction, error) {
