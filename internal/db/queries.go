@@ -79,7 +79,8 @@ const (
 		text TEXT,
 		media_type INTEGER,
 		reply_to_message_id TEXT,
-		edited BOOLEAN DEFAULT FALSE
+		edited BOOLEAN DEFAULT FALSE,
+		raw_message BLOB
 	);
 	CREATE INDEX IF NOT EXISTS idx_messages_chat_jid ON messages(chat_jid);
 	CREATE INDEX IF NOT EXISTS idx_messages_sender_jid ON messages(sender_jid);
@@ -100,8 +101,8 @@ const (
 
 	InsertDecodedMessage = `
 	INSERT OR REPLACE INTO messages 
-	(message_id, chat_jid, sender_jid, timestamp, is_from_me, type, text, media_type, reply_to_message_id, edited)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	(message_id, chat_jid, sender_jid, timestamp, is_from_me, type, text, media_type, reply_to_message_id, edited, raw_message)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	SelectDecodedMessageByID = `
@@ -111,13 +112,13 @@ const (
 	`
 
 	SelectMessageWithRawByID = `
-	SELECT message_id, chat_jid, sender_jid, timestamp, is_from_me, type, text, media_type, reply_to_message_id, edited
+	SELECT message_id, chat_jid, sender_jid, timestamp, is_from_me, type, text, media_type, reply_to_message_id, edited, raw_message
 	FROM messages
 	WHERE message_id = ?
 	`
 
 	SelectMessageWithRawByChatAndID = `
-	SELECT message_id, chat_jid, sender_jid, timestamp, is_from_me, type, text, media_type, reply_to_message_id, edited
+	SELECT message_id, chat_jid, sender_jid, timestamp, is_from_me, type, text, media_type, reply_to_message_id, edited, raw_message
 	FROM messages
 	WHERE chat_jid = ? AND message_id = ?
 	LIMIT 1

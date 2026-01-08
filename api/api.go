@@ -672,7 +672,21 @@ func (a *Api) mainEventHandler(evt any) {
 		// buf, _ := json.Marshal(v)
 		// fmt.Println("[Event] Message:", string(buf))
 
-		a.messageStore.ProcessMessageEvent(a.ctx, a.waClient.Store.LIDs, v)
+		messageID := a.messageStore.ProcessMessageEvent(a.ctx, a.waClient.Store.LIDs, v)
+
+		// If a message was processed (inserted or updated), emit the decoded message from DB
+		if messageID != "" {
+			updatedMsg, err := a.messageStore.GetDecodedMessage(v.Info.Chat.String(), messageID)
+			if err == nil {
+				runtime.EventsEmit(a.ctx, "wa:new_message", map[string]any{
+					"chatId":      v.Info.Chat.String(),
+					"message":     updatedMsg,
+					"messageText": updatedMsg.Text,
+					"timestamp":   v.Info.Timestamp.Unix(),
+					"sender":      v.Info.PushName,
+				})
+			}
+		}
 
 		// Automatically cache images and stickers when they arrive
 		go func() {
@@ -712,22 +726,6 @@ func (a *Api) mainEventHandler(evt any) {
 				}
 			}
 		}()
-
-		// Emit the message data directly so frontend doesn't need to make an API call
-		// Extract message text for chat list update
-		messageText := store.ExtractMessageText(v.Message)
-
-		msg := store.Message{
-			Info:    v.Info,
-			Content: v.Message,
-		}
-		runtime.EventsEmit(a.ctx, "wa:new_message", map[string]any{
-			"chatId":      v.Info.Chat.String(),
-			"message":     msg,
-			"messageText": messageText,
-			"timestamp":   v.Info.Timestamp.Unix(),
-			"sender":      v.Info.PushName,
-		})
 
 	case *events.Picture:
 		go a.GetCachedAvatar(v.JID.String(), true)

@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/gob"
 	"log"
+	"strings"
 	"time"
 
 	query "github.com/lugvitc/whats4linux/internal/db"
@@ -14,6 +15,7 @@ import (
 	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
+	"google.golang.org/protobuf/proto"
 )
 
 func gobDecode(data []byte, v interface{}) error {
@@ -24,6 +26,16 @@ func gobEncode(v interface{}) ([]byte, error) {
 	var buf bytes.Buffer
 	err := gob.NewEncoder(&buf).Encode(v)
 	return buf.Bytes(), err
+}
+
+func encodeMessage(msg *waE2E.Message) ([]byte, error) {
+	return proto.Marshal(msg)
+}
+
+func decodeMessage(data []byte) (*waE2E.Message, error) {
+	var msg waE2E.Message
+	err := proto.Unmarshal(data, &msg)
+	return &msg, err
 }
 
 type Reaction struct {
@@ -156,6 +168,15 @@ func openDB() (*sql.DB, error) {
 		}
 	}
 
+	// Migration: Add raw_message column if it doesn't exist
+	if _, err := db.Exec(`ALTER TABLE messages ADD COLUMN raw_message BLOB;`); err != nil {
+		// Ignore error if column already exists
+		if !strings.Contains(err.Error(), "duplicate column name") {
+			db.Close()
+			return nil, err
+		}
+	}
+
 	return db, nil
 }
 
@@ -268,7 +289,7 @@ func (ms *MessageStore) MigrateLIDToPN(ctx context.Context, sd store.LIDStore) e
 }
 
 // ProcessMessageEvent processes a new message event and stores it in messages.db
-func (ms *MessageStore) ProcessMessageEvent(ctx context.Context, sd store.LIDStore, msg *events.Message) {
+func (ms *MessageStore) ProcessMessageEvent(ctx context.Context, sd store.LIDStore, msg *events.Message) string {
 	updateCanonicalJID(ctx, sd, &msg.Info.Chat)
 	updateCanonicalJID(ctx, sd, &msg.Info.Sender)
 
@@ -277,14 +298,15 @@ func (ms *MessageStore) ProcessMessageEvent(ctx context.Context, sd store.LIDSto
 		targetID := protoMsg.GetKey().GetID()
 		newContent := protoMsg.GetEditedMessage()
 		if targetID == "" || newContent == nil {
-			return
+			return ""
 		}
 
 		err := ms.UpdateMessageContent(targetID, newContent)
 		if err != nil {
 			log.Println("Failed to update edited message:", err)
+			return ""
 		}
-		return
+		return targetID
 	}
 
 	chat := msg.Info.Chat.User
@@ -321,17 +343,17 @@ func (ms *MessageStore) ProcessMessageEvent(ctx context.Context, sd store.LIDSto
 		if err != nil {
 			log.Println("Failed to update message:", err)
 		}
-		return
+		return ""
 	}
 
 	ms.mCache.Set(msg.Info.ID, 1)
 	err := ms.InsertMessage(&m)
 	if err != nil {
 		log.Println("Failed to insert message:", err)
+		return ""
 	}
+	return msg.Info.ID
 }
-
-// InsertMessage inserts a new message into messages.db
 func (ms *MessageStore) InsertMessage(msg *Message) error {
 	// Handle reaction messages differently
 	if msg.Content.GetReactionMessage() != nil {
@@ -432,7 +454,12 @@ func (ms *MessageStore) InsertMessage(msg *Message) error {
 	}
 
 	return ms.runSync(func(tx *sql.Tx) error {
-		_, err := tx.Stmt(ms.stmtInsert).Exec(
+		rawData, err := encodeMessage(msg.Content)
+		if err != nil {
+			return err
+		}
+
+		_, err = tx.Stmt(ms.stmtInsert).Exec(
 			msg.Info.ID,
 			msg.Info.Chat.String(),
 			msg.Info.Sender.String(),
@@ -443,6 +470,7 @@ func (ms *MessageStore) InsertMessage(msg *Message) error {
 			mediaType,
 			replyToMessageID,
 			msg.Edited,
+			rawData,
 		)
 		if err != nil {
 			return err
@@ -515,6 +543,7 @@ func (ms *MessageStore) GetMessageWithRaw(chatJID string, messageID string) (*Me
 		mediaType sql.NullInt64
 		replyTo   sql.NullString
 		edited    bool
+		rawData   []byte
 	)
 
 	err := ms.db.QueryRow(query.SelectMessageWithRawByChatAndID, chatJID, messageID).Scan(
@@ -528,6 +557,7 @@ func (ms *MessageStore) GetMessageWithRaw(chatJID string, messageID string) (*Me
 		&mediaType,
 		&replyTo,
 		&edited,
+		&rawData,
 	)
 
 	if err != nil {
@@ -536,6 +566,15 @@ func (ms *MessageStore) GetMessageWithRaw(chatJID string, messageID string) (*Me
 
 	chatParsed, _ := types.ParseJID(chat)
 	senderParsed, _ := types.ParseJID(sender)
+
+	var content *waE2E.Message
+	if len(rawData) > 0 {
+		content, err = decodeMessage(rawData)
+		if err != nil {
+			log.Println("Failed to decode raw message:", err)
+			content = nil
+		}
+	}
 
 	msg := &Message{
 		Info: types.MessageInfo{
@@ -547,11 +586,9 @@ func (ms *MessageStore) GetMessageWithRaw(chatJID string, messageID string) (*Me
 				IsFromMe: isFromMe,
 			},
 		},
-		Edited: edited,
+		Content: content,
+		Edited:  edited,
 	}
-
-	// Note: Raw message content is no longer stored, so Content will be nil
-	// Media downloads will not work without raw message content
 
 	return msg, nil
 }
@@ -569,6 +606,7 @@ func (ms *MessageStore) GetMessageByIDWithRaw(messageID string) (*Message, error
 		mediaType sql.NullInt64
 		replyTo   sql.NullString
 		edited    bool
+		rawData   []byte
 	)
 
 	err := ms.db.QueryRow(query.SelectMessageWithRawByID, messageID).Scan(
@@ -582,6 +620,7 @@ func (ms *MessageStore) GetMessageByIDWithRaw(messageID string) (*Message, error
 		&mediaType,
 		&replyTo,
 		&edited,
+		&rawData,
 	)
 
 	if err != nil {
@@ -590,6 +629,15 @@ func (ms *MessageStore) GetMessageByIDWithRaw(messageID string) (*Message, error
 
 	chatParsed, _ := types.ParseJID(chat)
 	senderParsed, _ := types.ParseJID(sender)
+
+	var content *waE2E.Message
+	if len(rawData) > 0 {
+		content, err = decodeMessage(rawData)
+		if err != nil {
+			log.Println("Failed to decode raw message:", err)
+			content = nil
+		}
+	}
 
 	msg := &Message{
 		Info: types.MessageInfo{
@@ -601,11 +649,9 @@ func (ms *MessageStore) GetMessageByIDWithRaw(messageID string) (*Message, error
 				IsFromMe: isFromMe,
 			},
 		},
-		Edited: edited,
+		Content: content,
+		Edited:  edited,
 	}
-
-	// Note: Raw message content is no longer stored, so Content will be nil
-	// Media downloads will not work without raw message content
 
 	return msg, nil
 }
