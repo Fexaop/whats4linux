@@ -144,7 +144,7 @@ export function ChatInput({
       <div className="mb-2 flex items-start gap-2 rounded-md bg-black/5 dark:bg-white/10 p-2 text-xs">
         <div className="flex-1 min-w-0">
           <div className="font-semibold text-green-600 dark:text-green-400">
-            Replying to {senderLabel}
+            {senderLabel}
           </div>
           <div className="line-clamp-2 opacity-80">{previewText}</div>
         </div>
@@ -160,7 +160,12 @@ export function ChatInput({
   }
 
   return (
-    <div className="relative p-2 m-4 bg-light-bg dark:bg-dark-tertiary rounded-full">
+    <div
+      className={clsx(
+        "relative p-2 mb-4 mx-5 border border-dark-secondary bg-light-bg dark:bg-dark-tertiary",
+        replyingTo ? "rounded-t-xl rounded-b-3xl" : "rounded-full",
+      )}
+    >
       {showEmojiPicker && (
         <div ref={emojiPickerRef} className="absolute bottom-20 left-4 z-50">
           <Suspense fallback={<div className="p-4 text-sm">Loading emojis...</div>}>

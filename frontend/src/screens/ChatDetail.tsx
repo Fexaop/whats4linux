@@ -2,10 +2,11 @@ import { useEffect, useState, useRef, useCallback } from "react"
 import { SendMessage, FetchMessagesPaged, SendChatPresence } from "../../wailsjs/go/api/Api"
 import { store } from "../../wailsjs/go/models"
 import { EventsOn } from "../../wailsjs/runtime/runtime"
-import { useMessageStore, useUIStore } from "../store"
+import { useMessageStore, useUIStore, useChatStore } from "../store"
 import { MessageList, type MessageListHandle } from "../components/chat/MessageList"
 import { ChatHeader } from "../components/chat/ChatHeader"
 import { ChatInput } from "../components/chat/ChatInput"
+import { ChatInfo } from "../components/chat/ChatInfo"
 import clsx from "clsx"
 import gsap from "gsap"
 import { useGSAP } from "@gsap/react"
@@ -30,7 +31,8 @@ export function ChatDetail({ chatId, chatName, chatAvatar, onBack }: ChatDetailP
     addPendingMessage,
     updatePendingMessageToSent,
   } = useMessageStore()
-  const { setTypingIndicator, showEmojiPicker, setShowEmojiPicker } = useUIStore()
+  const { setTypingIndicator, showEmojiPicker, setShowEmojiPicker, chatInfoOpen, setChatInfoOpen } = useUIStore()
+  const { chatsById } = useChatStore()
 
   const chatMessages = messages[chatId] || []
   const [inputText, setInputText] = useState("")
@@ -355,9 +357,18 @@ export function ChatDetail({ chatId, chatName, chatAvatar, onBack }: ChatDetailP
     }
   }, [isAtBottom])
 
+  const currentChat = chatsById.get(chatId)
+  const chatType = currentChat?.type || "contact"
+
   return (
-    <div className="flex flex-col h-full bg-[#efeae2] dark:bg-dark-bg">
-      <ChatHeader chatName={chatName} chatAvatar={chatAvatar} onBack={onBack} />
+    <div className="flex h-full">
+      <div className="flex flex-col flex-1">
+        <ChatHeader 
+          chatName={chatName} 
+          chatAvatar={chatAvatar} 
+          onBack={onBack}
+          onInfoClick={() => setChatInfoOpen(!chatInfoOpen)}
+        />
 
       <div className="flex-1 relative overflow-hidden">
         {(initialLoad || !isReady) && (
@@ -397,7 +408,6 @@ export function ChatDetail({ chatId, chatName, chatAvatar, onBack }: ChatDetailP
           />
         </div>
       </div>
-
       <ChatInput
         inputText={inputText}
         pastedImage={pastedImage}
@@ -444,6 +454,16 @@ export function ChatDetail({ chatId, chatName, chatAvatar, onBack }: ChatDetailP
         }}
         onToggleEmojiPicker={() => setShowEmojiPicker(!showEmojiPicker)}
         onCancelReply={() => setReplyingTo(null)}
+      />
+      </div>
+      
+      <ChatInfo
+        chatId={chatId}
+        chatName={chatName}
+        chatType={chatType}
+        chatAvatar={chatAvatar}
+        isOpen={chatInfoOpen}
+        onClose={() => setChatInfoOpen(false)}
       />
     </div>
   )
