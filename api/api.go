@@ -168,18 +168,24 @@ func (a *Api) FetchGroups() ([]wa.Group, error) {
 	return result, nil
 }
 
-func (a *Api) GetContact(jid types.JID) (*Contact, error) {
+func (a *Api) GetContact(jidStr string) (*Contact, error) {
+	jid, err := types.ParseJID(jidStr)
+	if err != nil {
+		return nil, err
+	}
 	if jid.ActualAgent() == types.LIDDomain {
 		canonicalJID, err := a.waClient.Store.LIDs.GetPNForLID(a.ctx, jid)
 		if err == nil {
 			jid = canonicalJID
 		}
 	}
-	contact, err := a.waClient.Store.Contacts.GetContact(a.ctx, jid)
+	// Use base JID (without device) to get contact info
+	baseJID := jid.ToNonAD()
+	contact, err := a.waClient.Store.Contacts.GetContact(a.ctx, baseJID)
 	if err != nil {
 		return nil, err
 	}
-	rawNum := "+" + jid.User
+	rawNum := "+" + baseJID.User
 	// Parse phone number to use as International Format
 	num, err := phonenumbers.Parse(rawNum, "")
 	if err != nil {
@@ -342,7 +348,7 @@ func (a *Api) GetProfile(jidStr string) (Contact, error) {
 		}
 	}
 
-	contact, _ := a.waClient.Store.Contacts.GetContact(a.ctx, targetJID)
+	contact, _ := a.waClient.Store.Contacts.GetContact(a.ctx, targetJID.ToNonAD())
 	rawNum := "+" + targetJID.User
 
 	jid := rawNum
@@ -627,7 +633,7 @@ func (a *Api) SendMessage(chatJID string, content MessageContent) (string, error
 		Message: msgContent,
 	}
 	parsedHTML := a.processMessageText(msgContent)
-	a.messageStore.ProcessMessageEvent(a.ctx, a.waClient.Store.LIDs, msgEvent, parsedHTML)
+	messageID := a.messageStore.ProcessMessageEvent(a.ctx, a.waClient.Store.LIDs, msgEvent, parsedHTML)
 
 	// Extract message text for chat list update
 	var messageText string
@@ -652,10 +658,21 @@ func (a *Api) SendMessage(chatJID string, content MessageContent) (string, error
 		}
 	}
 
-	msg := store.Message{
-		Info:    msgEvent.Info,
-		Content: msgEvent.Message,
+	var msg any
+	if messageID != "" {
+		decodedMsg, err := a.messageStore.GetDecodedMessage(parsedJID.String(), messageID)
+		if err == nil {
+			msg = decodedMsg
+		}
 	}
+
+	if msg == nil {
+		msg = store.Message{
+			Info:    msgEvent.Info,
+			Content: msgEvent.Message,
+		}
+	}
+
 	runtime.EventsEmit(a.ctx, "wa:new_message", map[string]any{
 		"chatId":      parsedJID.String(),
 		"message":     msg,
@@ -1033,14 +1050,7 @@ func replaceMentions(text string, mentionedJIDs []string, a *Api) string {
 	return result
 }
 
-func (a *Api) RenderMarkdown(md string, mentionedJIDs []string) string {
-	processed := markdown.MarkdownLinesToHTML(md)
-	return processed
-}
-func (a *Api) RenderMarkdownPlain(md string) string {
-	processed := markdown.MarkdownLinesToHTML(md)
-	return processed
-}
+
 func (a *Api) GetGroupInfo(jidStr string) (Group, error) {
 	if !strings.HasSuffix(jidStr, "@g.us") {
 		return Group{}, fmt.Errorf("JID is not a group JID")
@@ -1058,7 +1068,7 @@ func (a *Api) GetGroupInfo(jidStr string) (Group, error) {
 
 	var participants []GroupParticipant
 	for _, p := range GroupInfo.Participants {
-		contact, err := a.GetContact(p.JID)
+		contact, err := a.GetContact(p.JID.String())
 		if err != nil {
 			return Group{}, fmt.Errorf("Error fetching participant: %w", err)
 		}
@@ -1068,7 +1078,7 @@ func (a *Api) GetGroupInfo(jidStr string) (Group, error) {
 			IsAdmin: p.IsAdmin,
 		})
 	}
-	owner, err := a.GetContact(GroupInfo.OwnerJID)
+	owner, err := a.GetContact(GroupInfo.OwnerJID.String())
 	if err != nil {
 		return Group{}, fmt.Errorf("Error fetching owner: %w", err)
 	}

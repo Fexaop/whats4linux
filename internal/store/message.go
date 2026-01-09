@@ -1,10 +1,8 @@
 package store
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
-	"encoding/gob"
 	"log"
 	"strings"
 	"time"
@@ -18,15 +16,6 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-func gobDecode(data []byte, v interface{}) error {
-	return gob.NewDecoder(bytes.NewReader(data)).Decode(v)
-}
-
-func gobEncode(v interface{}) ([]byte, error) {
-	var buf bytes.Buffer
-	err := gob.NewEncoder(&buf).Encode(v)
-	return buf.Bytes(), err
-}
 
 func encodeMessage(msg *waE2E.Message) ([]byte, error) {
 	return proto.Marshal(msg)
@@ -49,6 +38,7 @@ type Message struct {
 	Info      types.MessageInfo
 	Content   *waE2E.Message
 	Edited    bool
+	Forwarded bool
 	Reactions []Reaction
 }
 
@@ -62,18 +52,23 @@ type ChatMessage struct {
 
 type writeJob func(*sql.Tx) error
 
+type pendingJob struct {
+	job  writeJob
+	done chan error
+}
+
 type MessageStore struct {
 	db *sql.DB
 
 	// [chatJID.User] = ChatMessage
 	chatListMap   misc.VMap[string, ChatMessage]
 	mCache        misc.VMap[string, uint8]
-	reactionCache misc.VMap[string, map[string][]string]
+	reactionCache misc.NMap[string, string, []string]
 
 	stmtInsert *sql.Stmt
 	stmtUpdate *sql.Stmt
 
-	writeCh chan writeJob
+	writeCh chan pendingJob
 }
 
 func NewMessageStore() (*MessageStore, error) {
@@ -82,66 +77,79 @@ func NewMessageStore() (*MessageStore, error) {
 		return nil, err
 	}
 
-	if _, err := db.Exec(query.CreateMessagesTable); err != nil {
-		db.Close()
-		return nil, err
-	}
-	if _, err := db.Exec(query.CreateReactionsTable); err != nil {
-		db.Close()
-		return nil, err
-	}
-
-	stmtInsert, err := db.Prepare(query.InsertDecodedMessage)
-	if err != nil {
-		db.Close()
-		return nil, err
-	}
-
-	stmtUpdate, err := db.Prepare(query.UpdateDecodedMessage)
-	if err != nil {
-		stmtInsert.Close()
-		db.Close()
-		return nil, err
-	}
-
 	ms := &MessageStore{
 		db:            db,
 		chatListMap:   misc.NewVMap[string, ChatMessage](),
 		mCache:        misc.NewVMap[string, uint8](),
-		reactionCache: misc.NewVMap[string, map[string][]string](),
-		stmtInsert:    stmtInsert,
-		stmtUpdate:    stmtUpdate,
-		writeCh:       make(chan writeJob, 100),
+		reactionCache: misc.NewNMap[string, string, []string](),
+		writeCh:       make(chan pendingJob, 100),
 	}
 
 	go ms.runWriter()
+
+	err = ms.runSync(func(tx *sql.Tx) error {
+		_, err := tx.Exec(query.CreateMessagesTable)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(query.CreateReactionsTable)
+		return err
+	})
+
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+
+	err = ms.runSync(func(tx *sql.Tx) error {
+		var err error
+		ms.stmtInsert, err = tx.Prepare(query.InsertDecodedMessage)
+		if err != nil {
+			return err
+		}
+		ms.stmtUpdate, err = tx.Prepare(query.UpdateDecodedMessage)
+		return err
+	})
+
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
 
 	return ms, nil
 }
 
 func (ms *MessageStore) runWriter() {
-	for job := range ms.writeCh {
+	for pJob := range ms.writeCh {
 		tx, err := ms.db.Begin()
 		if err != nil {
+			if pJob.done != nil {
+				pJob.done <- err
+			}
 			continue
 		}
 
-		if err := job(tx); err != nil {
+		if err := pJob.job(tx); err != nil {
 			tx.Rollback()
+			if pJob.done != nil {
+				pJob.done <- err
+			}
 			continue
 		}
 
-		tx.Commit()
+		err = tx.Commit()
+		if pJob.done != nil {
+			pJob.done <- err
+		}
 	}
 }
 
 func (ms *MessageStore) runSync(job writeJob) error {
 	done := make(chan error, 1)
 
-	ms.writeCh <- func(tx *sql.Tx) error {
-		err := job(tx)
-		done <- err
-		return err
+	ms.writeCh <- pendingJob{
+		job:  job,
+		done: done,
 	}
 
 	return <-done
@@ -170,6 +178,15 @@ func openDB() (*sql.DB, error) {
 
 	// Migration: Add raw_message column if it doesn't exist
 	if _, err := db.Exec(`ALTER TABLE messages ADD COLUMN raw_message BLOB;`); err != nil {
+		// Ignore error if column already exists
+		if !strings.Contains(err.Error(), "duplicate column name") {
+			db.Close()
+			return nil, err
+		}
+	}
+
+	// Migration: Add forwarded column if it doesn't exist
+	if _, err := db.Exec(`ALTER TABLE messages ADD COLUMN forwarded BOOLEAN DEFAULT FALSE;`); err != nil {
 		// Ignore error if column already exists
 		if !strings.Contains(err.Error(), "duplicate column name") {
 			db.Close()
@@ -288,8 +305,54 @@ func (ms *MessageStore) MigrateLIDToPN(ctx context.Context, sd store.LIDStore) e
 	})
 }
 
+// migrateChatlist migrates chatlist entries from LID to PN when a new PN chat is detected
+func (ms *MessageStore) migrateChatlist(ctx context.Context, sd store.LIDStore, chat types.JID) {
+	if chat.ActualAgent() == types.LIDDomain {
+		// not a jid, skip
+		return
+	}
+	if _, ok := ms.chatListMap.Get(chat.User); ok {
+		// not a new jid, skip
+		return
+	}
+	// new chat in chatlist
+	// check if a corresponding lid exists
+	lid, err := sd.GetLIDForPN(ctx, chat)
+	if err != nil {
+		return
+	}
+	if lid.User == "" {
+		return
+	}
+	// check if lid has a chatlist entry (means there are messages for this lid chat)
+	if _, ok := ms.chatListMap.Get(lid.User); !ok {
+		// no messages for this lid chat, nothing to migrate
+		return
+	}
+	// migrate all messages from this lid to pn
+	// hack: we won't update the msginfo, just update chat marker in messages for now
+	// complete the migrate on next restart when chat != msginfo.chat
+	ms.writeCh <- pendingJob{
+		job: func(tx *sql.Tx) error {
+			_, err := tx.Exec(
+				query.UpdateMessagesChat,
+				chat.String(),
+				lid.String(),
+			)
+			return err
+		},
+		done: nil,
+	}
+	log.Printf("Migrated messages.chat marker from LID %s to PN %s\n", lid.String(), chat.String())
+
+	// delete lid chatlist entry from cache
+	ms.chatListMap.Delete(lid.User)
+}
+
 // ProcessMessageEvent processes a new message event and stores it in messages.db
 func (ms *MessageStore) ProcessMessageEvent(ctx context.Context, sd store.LIDStore, msg *events.Message, parsedHTML string) string {
+	ms.migrateChatlist(ctx, sd, msg.Info.Chat)
+
 	updateCanonicalJID(ctx, sd, &msg.Info.Chat)
 	updateCanonicalJID(ctx, sd, &msg.Info.Sender)
 
@@ -370,91 +433,108 @@ func (ms *MessageStore) InsertMessage(msg *Message, parsedHTML string) error {
 	var msgType query.MessageType = query.MessageTypeText
 	var mediaType query.MediaType
 	var text string
+	var forwarded bool
 
 	// Extract mentions if it's an extended text message
 	var replyToMessageID string
 	if msg.Content.GetExtendedTextMessage() != nil && msg.Content.GetExtendedTextMessage().GetContextInfo() != nil {
 		replyToMessageID = msg.Content.GetExtendedTextMessage().GetContextInfo().GetStanzaID()
+		forwarded = msg.Content.GetExtendedTextMessage().GetContextInfo().GetIsForwarded()
+	}
+
+	// Check forwarded status for other message types
+	switch {
+	case msg.Content.GetImageMessage() != nil:
+		if msg.Content.GetImageMessage().GetContextInfo() != nil {
+			forwarded = msg.Content.GetImageMessage().GetContextInfo().GetIsForwarded()
+		}
+	case msg.Content.GetVideoMessage() != nil:
+		if msg.Content.GetVideoMessage().GetContextInfo() != nil {
+			forwarded = msg.Content.GetVideoMessage().GetContextInfo().GetIsForwarded()
+		}
+	case msg.Content.GetAudioMessage() != nil:
+		if msg.Content.GetAudioMessage().GetContextInfo() != nil {
+			forwarded = msg.Content.GetAudioMessage().GetContextInfo().GetIsForwarded()
+		}
+	case msg.Content.GetDocumentMessage() != nil:
+		if msg.Content.GetDocumentMessage().GetContextInfo() != nil {
+			forwarded = msg.Content.GetDocumentMessage().GetContextInfo().GetIsForwarded()
+		}
+	case msg.Content.GetStickerMessage() != nil:
+		if msg.Content.GetStickerMessage().GetContextInfo() != nil {
+			forwarded = msg.Content.GetStickerMessage().GetContextInfo().GetIsForwarded()
+		}
 	}
 
 	// Serialize raw message for media types
 
+	// Determine message type and initial text content
+	switch {
+	case msg.Content.GetImageMessage() != nil:
+		msgType = query.MessageTypeImage
+		mediaType = query.MediaTypeImage
+		text = msg.Content.GetImageMessage().GetCaption()
+
+	case msg.Content.GetVideoMessage() != nil:
+		msgType = query.MessageTypeVideo
+		mediaType = query.MediaTypeVideo
+		text = msg.Content.GetVideoMessage().GetCaption()
+	case msg.Content.GetAudioMessage() != nil:
+		msgType = query.MessageTypeAudio
+		mediaType = query.MediaTypeAudio
+	case msg.Content.GetDocumentMessage() != nil:
+		msgType = query.MessageTypeDocument
+		mediaType = query.MediaTypeDocument
+		text = msg.Content.GetDocumentMessage().GetFileName()
+	case msg.Content.GetStickerMessage() != nil:
+		msgType = query.MessageTypeSticker
+		mediaType = query.MediaTypeSticker
+	case msg.Content.GetConversation() != "":
+		text = msg.Content.GetConversation()
+	case msg.Content.GetExtendedTextMessage() != nil:
+		text = msg.Content.GetExtendedTextMessage().GetText()
+	default:
+		// Log unsupported message type with detailed information
+		log.Printf("Skipping unsupported message type for message ID %s in chat %s", msg.Info.ID, msg.Info.Chat.String())
+		log.Printf("Message content details:")
+		switch {
+		case msg.Content.GetConversation() != "":
+			log.Printf("  - Has conversation: %s", msg.Content.GetConversation())
+		case msg.Content.GetExtendedTextMessage() != nil:
+			log.Printf("  - Has extended text: %s", msg.Content.GetExtendedTextMessage().GetText())
+		case msg.Content.GetImageMessage() != nil:
+			log.Printf("  - Has image message")
+		case msg.Content.GetVideoMessage() != nil:
+			log.Printf("  - Has video message")
+		case msg.Content.GetAudioMessage() != nil:
+			log.Printf("  - Has audio message")
+		case msg.Content.GetDocumentMessage() != nil:
+			log.Printf("  - Has document message")
+		case msg.Content.GetStickerMessage() != nil:
+			log.Printf("  - Has sticker message")
+		case msg.Content.GetContactMessage() != nil:
+			log.Printf("  - Has contact message")
+		case msg.Content.GetLocationMessage() != nil:
+			log.Printf("  - Has location message")
+		case msg.Content.GetLiveLocationMessage() != nil:
+			log.Printf("  - Has live location message")
+		case msg.Content.GetPollCreationMessage() != nil:
+			log.Printf("  - Has poll creation message")
+		case msg.Content.GetPollUpdateMessage() != nil:
+			log.Printf("  - Has poll update message")
+		case msg.Content.GetProtocolMessage() != nil:
+			log.Printf("  - Has protocol message (type: %v)", msg.Content.GetProtocolMessage().GetType())
+		case msg.Content.GetReactionMessage() != nil:
+			log.Printf("  - Has reaction message")
+		case msg.Content.GetSenderKeyDistributionMessage() != nil:
+			log.Printf("  - Has sender key distribution message")
+		}
+		log.Printf("Full message content: %+v", msg.Content)
+		return nil
+	}
+
 	if parsedHTML != "" {
 		text = parsedHTML
-	} else if msg.Content.GetConversation() != "" {
-		text = msg.Content.GetConversation()
-	} else if msg.Content.GetExtendedTextMessage() != nil {
-		text = msg.Content.GetExtendedTextMessage().GetText()
-	} else {
-		switch {
-		case msg.Content.GetImageMessage() != nil:
-			msgType = query.MessageTypeImage
-			mediaType = query.MediaTypeImage
-			text = msg.Content.GetImageMessage().GetCaption()
-			if text == "" {
-				text = "image"
-			}
-		case msg.Content.GetVideoMessage() != nil:
-			msgType = query.MessageTypeVideo
-			mediaType = query.MediaTypeVideo
-			text = msg.Content.GetVideoMessage().GetCaption()
-			if text == "" {
-				text = "video"
-			}
-		case msg.Content.GetAudioMessage() != nil:
-			msgType = query.MessageTypeAudio
-			mediaType = query.MediaTypeAudio
-			text = "audio"
-		case msg.Content.GetDocumentMessage() != nil:
-			msgType = query.MessageTypeDocument
-			mediaType = query.MediaTypeDocument
-			text = msg.Content.GetDocumentMessage().GetFileName()
-			if text == "" {
-				text = "document"
-			}
-		case msg.Content.GetStickerMessage() != nil:
-			msgType = query.MessageTypeSticker
-			mediaType = query.MediaTypeSticker
-			text = "sticker"
-		default:
-			// Log unsupported message type with detailed information
-			log.Printf("Skipping unsupported message type for message ID %s in chat %s", msg.Info.ID, msg.Info.Chat.String())
-			log.Printf("Message content details:")
-			switch {
-			case msg.Content.GetConversation() != "":
-				log.Printf("  - Has conversation: %s", msg.Content.GetConversation())
-			case msg.Content.GetExtendedTextMessage() != nil:
-				log.Printf("  - Has extended text: %s", msg.Content.GetExtendedTextMessage().GetText())
-			case msg.Content.GetImageMessage() != nil:
-				log.Printf("  - Has image message")
-			case msg.Content.GetVideoMessage() != nil:
-				log.Printf("  - Has video message")
-			case msg.Content.GetAudioMessage() != nil:
-				log.Printf("  - Has audio message")
-			case msg.Content.GetDocumentMessage() != nil:
-				log.Printf("  - Has document message")
-			case msg.Content.GetStickerMessage() != nil:
-				log.Printf("  - Has sticker message")
-			case msg.Content.GetContactMessage() != nil:
-				log.Printf("  - Has contact message")
-			case msg.Content.GetLocationMessage() != nil:
-				log.Printf("  - Has location message")
-			case msg.Content.GetLiveLocationMessage() != nil:
-				log.Printf("  - Has live location message")
-			case msg.Content.GetPollCreationMessage() != nil:
-				log.Printf("  - Has poll creation message")
-			case msg.Content.GetPollUpdateMessage() != nil:
-				log.Printf("  - Has poll update message")
-			case msg.Content.GetProtocolMessage() != nil:
-				log.Printf("  - Has protocol message (type: %v)", msg.Content.GetProtocolMessage().GetType())
-			case msg.Content.GetReactionMessage() != nil:
-				log.Printf("  - Has reaction message")
-			case msg.Content.GetSenderKeyDistributionMessage() != nil:
-				log.Printf("  - Has sender key distribution message")
-			}
-			log.Printf("Full message content: %+v", msg.Content)
-			return nil
-		}
 	}
 
 	return ms.runSync(func(tx *sql.Tx) error {
@@ -474,6 +554,7 @@ func (ms *MessageStore) InsertMessage(msg *Message, parsedHTML string) error {
 			mediaType,
 			replyToMessageID,
 			msg.Edited,
+			forwarded,
 			rawData,
 		)
 		if err != nil {
@@ -549,6 +630,7 @@ func (ms *MessageStore) GetMessageWithRaw(chatJID string, messageID string) (*Me
 		mediaType sql.NullInt64
 		replyTo   sql.NullString
 		edited    bool
+		forwarded bool
 		rawData   []byte
 	)
 
@@ -563,6 +645,7 @@ func (ms *MessageStore) GetMessageWithRaw(chatJID string, messageID string) (*Me
 		&mediaType,
 		&replyTo,
 		&edited,
+		&forwarded,
 		&rawData,
 	)
 
@@ -592,8 +675,9 @@ func (ms *MessageStore) GetMessageWithRaw(chatJID string, messageID string) (*Me
 				IsFromMe: isFromMe,
 			},
 		},
-		Content: content,
-		Edited:  edited,
+		Content:   content,
+		Edited:    edited,
+		Forwarded: forwarded,
 	}
 
 	return msg, nil
@@ -612,6 +696,7 @@ func (ms *MessageStore) GetMessageByIDWithRaw(messageID string) (*Message, error
 		mediaType sql.NullInt64
 		replyTo   sql.NullString
 		edited    bool
+		forwarded bool
 		rawData   []byte
 	)
 
@@ -626,6 +711,7 @@ func (ms *MessageStore) GetMessageByIDWithRaw(messageID string) (*Message, error
 		&mediaType,
 		&replyTo,
 		&edited,
+		&forwarded,
 		&rawData,
 	)
 
@@ -655,8 +741,9 @@ func (ms *MessageStore) GetMessageByIDWithRaw(messageID string) (*Message, error
 				IsFromMe: isFromMe,
 			},
 		},
-		Content: content,
-		Edited:  edited,
+		Content:   content,
+		Edited:    edited,
+		Forwarded: forwarded,
 	}
 
 	return msg, nil
@@ -684,6 +771,7 @@ func (ms *MessageStore) GetChatList() []ChatMessage {
 			mediaType sql.NullInt64
 			replyTo   sql.NullString
 			edited    bool
+			forwarded bool
 		)
 
 		if err := rows.Scan(
@@ -697,6 +785,7 @@ func (ms *MessageStore) GetChatList() []ChatMessage {
 			&mediaType,
 			&replyTo,
 			&edited,
+			&forwarded,
 		); err != nil {
 			continue
 		}
@@ -740,7 +829,11 @@ func (ms *MessageStore) GetChatList() []ChatMessage {
 
 // GetReactionsByMessageID returns all reactions for a message
 func (ms *MessageStore) GetReactionsByMessageID(messageID string) ([]Reaction, error) {
-	if cached, ok := ms.reactionCache.Get(messageID); ok {
+	underlying, mu := ms.reactionCache.GetMapWithMutex()
+	mu.RLock()
+	cached, ok := underlying[messageID]
+	mu.RUnlock()
+	if ok {
 		var reactions []Reaction
 		for emoji, senders := range cached {
 			for _, sender := range senders {
@@ -772,7 +865,10 @@ func (ms *MessageStore) GetReactionsByMessageID(messageID string) ([]Reaction, e
 		cacheMap[reaction.Emoji] = append(cacheMap[reaction.Emoji], reaction.SenderID)
 	}
 
-	ms.reactionCache.Set(messageID, cacheMap)
+	underlying, mu = ms.reactionCache.GetMapWithMutex()
+	mu.Lock()
+	underlying[messageID] = cacheMap
+	mu.Unlock()
 	return reactions, nil
 }
 
@@ -788,8 +884,10 @@ func (ms *MessageStore) AddReactionToMessage(targetID, reaction, senderJID strin
 			return err
 		}
 		// Update cache: remove senderJID from all emojis for targetID
-		if cached, ok := ms.reactionCache.Get(targetID); ok {
-			for emoji, senders := range cached {
+		underlying, mu := ms.reactionCache.GetMapWithMutex()
+		mu.Lock()
+		if inner, ok := underlying[targetID]; ok {
+			for emoji, senders := range inner {
 				newSenders := make([]string, 0, len(senders))
 				for _, s := range senders {
 					if s != senderJID {
@@ -797,17 +895,16 @@ func (ms *MessageStore) AddReactionToMessage(targetID, reaction, senderJID strin
 					}
 				}
 				if len(newSenders) == 0 {
-					delete(cached, emoji)
+					delete(inner, emoji)
 				} else {
-					cached[emoji] = newSenders
+					inner[emoji] = newSenders
 				}
 			}
-			if len(cached) == 0 {
-				ms.reactionCache.Delete(targetID)
-			} else {
-				ms.reactionCache.Set(targetID, cached)
+			if len(inner) == 0 {
+				delete(underlying, targetID)
 			}
 		}
+		mu.Unlock()
 		return nil
 	}
 
@@ -826,29 +923,30 @@ func (ms *MessageStore) AddReactionToMessage(targetID, reaction, senderJID strin
 		return err
 	}
 	// Update cache: remove sender from all emojis, then add to new emoji
-	if cached, ok := ms.reactionCache.Get(targetID); ok {
-		// Remove from all
-		for emoji, senders := range cached {
-			newSenders := make([]string, 0, len(senders))
-			for _, s := range senders {
-				if s != senderJID {
-					newSenders = append(newSenders, s)
-				}
-			}
-			if len(newSenders) == 0 {
-				delete(cached, emoji)
-			} else {
-				cached[emoji] = newSenders
+	underlying, mu := ms.reactionCache.GetMapWithMutex()
+	mu.Lock()
+	inner := underlying[targetID]
+	if inner == nil {
+		inner = make(map[string][]string)
+		underlying[targetID] = inner
+	}
+	// Remove from all
+	for emoji, senders := range inner {
+		newSenders := make([]string, 0, len(senders))
+		for _, s := range senders {
+			if s != senderJID {
+				newSenders = append(newSenders, s)
 			}
 		}
-		// Add to new emoji
-		cached[reaction] = append(cached[reaction], senderJID)
-		ms.reactionCache.Set(targetID, cached)
-	} else {
-		// New map
-		cacheMap := map[string][]string{reaction: {senderJID}}
-		ms.reactionCache.Set(targetID, cacheMap)
+		if len(newSenders) == 0 {
+			delete(inner, emoji)
+		} else {
+			inner[emoji] = newSenders
+		}
 	}
+	// Add to new emoji
+	inner[reaction] = append(inner[reaction], senderJID)
+	mu.Unlock()
 	return nil
 }
 
@@ -864,6 +962,7 @@ type DecodedMessage struct {
 	MediaType        int        `json:"media_type"`
 	ReplyToMessageID string     `json:"reply_to_message_id"`
 	Edited           bool       `json:"edited"`
+	Forwarded        bool       `json:"forwarded"`
 	Reactions        []Reaction `json:"reactions"`
 	// Info provides compatibility with frontend that expects types.MessageInfo structure
 	Info DecodedMessageInfo `json:"Info"`
@@ -951,6 +1050,7 @@ func (ms *MessageStore) GetDecodedMessagesPaged(chatJID string, beforeTimestamp 
 			&mediaType,
 			&replyTo,
 			&msg.Edited,
+			&msg.Forwarded,
 		)
 		if err != nil {
 			log.Println("Failed to scan decoded message:", err)
@@ -1073,6 +1173,7 @@ func (ms *MessageStore) GetDecodedMessage(chatJID string, messageID string) (*De
 		&mediaType,
 		&replyTo,
 		&msg.Edited,
+		&msg.Forwarded,
 	)
 
 	if err != nil {
@@ -1111,6 +1212,7 @@ func (ms *MessageStore) GetDecodedMessage(chatJID string, messageID string) (*De
 	return &msg, nil
 }
 
+
 // GetDecodedChatList returns the chat list from messages.db with the latest message for each chat
 func (ms *MessageStore) GetDecodedChatList() ([]DecodedMessage, error) {
 	rows, err := ms.db.Query(query.SelectDecodedChatList)
@@ -1138,6 +1240,7 @@ func (ms *MessageStore) GetDecodedChatList() ([]DecodedMessage, error) {
 			&mediaType,
 			&replyTo,
 			&msg.Edited,
+			&msg.Forwarded,
 		)
 		if err != nil {
 			log.Println("Failed to scan decoded message for chat list:", err)

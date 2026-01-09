@@ -80,6 +80,7 @@ const (
 		media_type INTEGER,
 		reply_to_message_id TEXT,
 		edited BOOLEAN DEFAULT FALSE,
+		forwarded BOOLEAN DEFAULT FALSE,
 		raw_message BLOB
 	);
 	CREATE INDEX IF NOT EXISTS idx_messages_chat_jid ON messages(chat_jid);
@@ -101,24 +102,24 @@ const (
 
 	InsertDecodedMessage = `
 	INSERT OR REPLACE INTO messages 
-	(message_id, chat_jid, sender_jid, timestamp, is_from_me, type, text, media_type, reply_to_message_id, edited, raw_message)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	(message_id, chat_jid, sender_jid, timestamp, is_from_me, type, text, media_type, reply_to_message_id, edited, forwarded, raw_message)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	SelectDecodedMessageByID = `
-	SELECT message_id, chat_jid, sender_jid, timestamp, is_from_me, type, text, media_type, reply_to_message_id, edited
+	SELECT message_id, chat_jid, sender_jid, timestamp, is_from_me, type, text, media_type, reply_to_message_id, edited, forwarded
 	FROM messages
 	WHERE message_id = ?
 	`
 
 	SelectMessageWithRawByID = `
-	SELECT message_id, chat_jid, sender_jid, timestamp, is_from_me, type, text, media_type, reply_to_message_id, edited, raw_message
+	SELECT message_id, chat_jid, sender_jid, timestamp, is_from_me, type, text, media_type, reply_to_message_id, edited, forwarded, raw_message
 	FROM messages
 	WHERE message_id = ?
 	`
 
 	SelectMessageWithRawByChatAndID = `
-	SELECT message_id, chat_jid, sender_jid, timestamp, is_from_me, type, text, media_type, reply_to_message_id, edited, raw_message
+	SELECT message_id, chat_jid, sender_jid, timestamp, is_from_me, type, text, media_type, reply_to_message_id, edited, forwarded, raw_message
 	FROM messages
 	WHERE chat_jid = ? AND message_id = ?
 	LIMIT 1
@@ -162,9 +163,9 @@ const (
 
 	// Messages.db paged queries (for frontend)
 	SelectDecodedMessagesByChatBeforeTimestamp = `
-	SELECT message_id, chat_jid, sender_jid, timestamp, is_from_me, type, text, media_type, reply_to_message_id, edited
+	SELECT message_id, chat_jid, sender_jid, timestamp, is_from_me, type, text, media_type, reply_to_message_id, edited, forwarded
 	FROM (
-		SELECT message_id, chat_jid, sender_jid, timestamp, is_from_me, type, text, media_type, reply_to_message_id, edited
+		SELECT message_id, chat_jid, sender_jid, timestamp, is_from_me, type, text, media_type, reply_to_message_id, edited, forwarded
 		FROM messages
 		WHERE chat_jid = ? AND timestamp < ?
 		ORDER BY timestamp DESC
@@ -174,9 +175,9 @@ const (
 	`
 
 	SelectLatestDecodedMessagesByChat = `
-	SELECT message_id, chat_jid, sender_jid, timestamp, is_from_me, type, text, media_type, reply_to_message_id, edited
+	SELECT message_id, chat_jid, sender_jid, timestamp, is_from_me, type, text, media_type, reply_to_message_id, edited, forwarded
 	FROM (
-		SELECT message_id, chat_jid, sender_jid, timestamp, is_from_me, type, text, media_type, reply_to_message_id, edited
+		SELECT message_id, chat_jid, sender_jid, timestamp, is_from_me, type, text, media_type, reply_to_message_id, edited, forwarded
 		FROM messages
 		WHERE chat_jid = ?
 		ORDER BY timestamp DESC
@@ -186,7 +187,7 @@ const (
 	`
 
 	SelectDecodedMessageByChatAndID = `
-	SELECT message_id, chat_jid, sender_jid, timestamp, is_from_me, type, text, media_type, reply_to_message_id, edited
+	SELECT message_id, chat_jid, sender_jid, timestamp, is_from_me, type, text, media_type, reply_to_message_id, edited, forwarded
 	FROM messages
 	WHERE chat_jid = ? AND message_id = ?
 	LIMIT 1
@@ -194,10 +195,10 @@ const (
 
 	// Chat list from messages.db
 	SelectDecodedChatList = `
-	SELECT message_id, chat_jid, sender_jid, timestamp, is_from_me, type, text, media_type, reply_to_message_id, edited
+	SELECT message_id, chat_jid, sender_jid, timestamp, is_from_me, type, text, media_type, reply_to_message_id, edited, forwarded
 	FROM (
 		SELECT 
-			message_id, chat_jid, sender_jid, timestamp, is_from_me, type, text, media_type, reply_to_message_id, edited,
+			message_id, chat_jid, sender_jid, timestamp, is_from_me, type, text, media_type, reply_to_message_id, edited, forwarded,
 			ROW_NUMBER() OVER (
 				PARTITION BY chat_jid
 				ORDER BY timestamp DESC

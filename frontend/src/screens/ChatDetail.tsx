@@ -308,8 +308,8 @@ export function ChatDetail({ chatId, chatName, chatAvatar, onBack }: ChatDetailP
     // They will be compatible due to the Info and Content structure
     const unsub = EventsOn("wa:new_message", (data: { chatId: string; message: any }) => {
       if (data?.chatId === chatId) {
-        // Check if this message replaces a pending message
-        const currentMessages = messages[chatId] || []
+        // Use getState to avoid depending on messages array and causing re-subscriptions
+        const currentMessages = useMessageStore.getState().messages[chatId] || []
         const hasPendingMessage = currentMessages.some((m: any) => m.isPending)
 
         if (hasPendingMessage && data.message.Info?.IsFromMe) {
@@ -334,7 +334,7 @@ export function ChatDetail({ chatId, chatName, chatAvatar, onBack }: ChatDetailP
     })
 
     return () => unsub()
-  }, [chatId, updateMessage, updatePendingMessageToSent, scrollToBottom, messages, isAtBottom])
+  }, [chatId, updateMessage, updatePendingMessageToSent, scrollToBottom, isAtBottom])
 
   useGSAP(() => {
     if (!scrollButtonRef.current) return
