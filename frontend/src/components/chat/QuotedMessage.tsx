@@ -74,7 +74,10 @@ export function QuotedMessage({
         )}
       </div>
 
-      <div className="line-clamp-2 opacity-70" dangerouslySetInnerHTML={{ __html: getText()}}></div>
+      <div
+        className="line-clamp-2 opacity-70"
+        dangerouslySetInnerHTML={{ __html: getText() }}
+      ></div>
     </div>
   )
 }
