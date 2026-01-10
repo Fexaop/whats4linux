@@ -40,7 +40,7 @@ const (
 	`
 
 	SelectDecodedMessageByChatAndID = `
-	SELECT sender_jid, timestamp, is_from_me, text, has_media, reply_to_message_id, edited, forwarded, mm.type
+	SELECT sender_jid, timestamp, is_from_me, text, reply_to_message_id, edited, forwarded, mm.type
 	FROM messages
 	LEFT JOIN message_media AS mm ON mm.message_id = messages.message_id
 	WHERE chat_jid = ? AND message_id = ?
@@ -61,9 +61,9 @@ const (
 
 	// Messages.db paged queries (for frontend)
 	SelectMessagesByChatBeforeTimestamp = `
-	SELECT m.message_id, m.chat_jid, m.sender_jid, m.timestamp, m.is_from_me, m.text, m.has_media, m.reply_to_message_id, m.edited, m.forwarded, mm.type
+	SELECT m.message_id, m.chat_jid, m.sender_jid, m.timestamp, m.is_from_me, m.text, m.reply_to_message_id, m.edited, m.forwarded, mm.type
 	FROM (
-		SELECT message_id, chat_jid, sender_jid, timestamp, is_from_me, text, has_media, reply_to_message_id, edited, forwarded
+		SELECT message_id, chat_jid, sender_jid, timestamp, is_from_me, text, reply_to_message_id, edited, forwarded
 		FROM messages
 		WHERE chat_jid = ? AND timestamp < ?
 		ORDER BY timestamp DESC
@@ -75,7 +75,7 @@ const (
 	`
 
 	SelectLatestMessagesByChat = `
-	SELECT m.message_id, m.chat_jid, m.sender_jid, m.timestamp, m.is_from_me, m.text, m.has_media, m.reply_to_message_id, m.edited, m.forwarded, mm.type
+	SELECT m.message_id, m.chat_jid, m.sender_jid, m.timestamp, m.is_from_me, m.text, m.reply_to_message_id, m.edited, m.forwarded, mm.type
 	FROM (
 		SELECT message_id, chat_jid, sender_jid, timestamp, is_from_me, text, reply_to_message_id, edited, forwarded
 		FROM messages
@@ -97,16 +97,16 @@ const (
 
 	// Chat list from messages.db
 	SelectDecodedChatList = `
-	SELECT message_id, chat_jid, sender_jid, timestamp, is_from_me, text, reply_to_message_id, edited, forwarded, mm.type
+	SELECT m.message_id, m.chat_jid, m.sender_jid, m.timestamp, m.is_from_me, m.text, m.reply_to_message_id, m.edited, m.forwarded, mm.type
 	FROM (
 		SELECT 
-			message_id, chat_jid, sender_jid, timestamp, is_from_me, type, text, reply_to_message_id, edited, forwarded,
+			message_id, chat_jid, sender_jid, timestamp, is_from_me, text, reply_to_message_id, edited, forwarded,
 			ROW_NUMBER() OVER (
 				PARTITION BY chat_jid
 				ORDER BY timestamp DESC
 			) AS rn
 		FROM messages
-	)
+	) AS m
 	LEFT JOIN message_media AS mm
     	ON mm.message_id = m.message_id
 	WHERE rn = 1

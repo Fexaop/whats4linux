@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"log"
 	"time"
 
@@ -733,6 +734,7 @@ func (ms *MessageStore) GetMessageWithMediaByID(messageID string) (*ExtendedMess
 func (ms *MessageStore) GetChatList() []ChatMessage {
 	rows, err := ms.db.Query(query.SelectDecodedChatList)
 	if err != nil {
+		log.Println("Failed to query chat list:", err)
 		return []ChatMessage{}
 	}
 	defer rows.Close()
@@ -746,7 +748,7 @@ func (ms *MessageStore) GetChatList() []ChatMessage {
 			senderJID string
 			timestamp int64
 			isFromMe  bool
-			msgType   int
+			msgType   sql.NullInt32
 			text      sql.NullString
 			replyTo   sql.NullString
 			edited    bool
@@ -765,6 +767,7 @@ func (ms *MessageStore) GetChatList() []ChatMessage {
 			&forwarded,
 			&msgType,
 		); err != nil {
+			fmt.Println("Failed to scan chat list row:", err)
 			continue
 		}
 
@@ -801,6 +804,7 @@ func (ms *MessageStore) GetChatList() []ChatMessage {
 		ms.chatListMap.Set(jid.User, chatMsg)
 		chatList = append(chatList, chatMsg)
 	}
+	fmt.Println(chatList)
 
 	return chatList
 }
@@ -1017,6 +1021,7 @@ func (ms *MessageStore) GetDecodedMessagesPaged(chatJID string, beforeTimestamp 
 		var msg DecodedMessage
 		var replyTo sql.NullString
 		var text sql.NullString
+		var msgType sql.NullInt32
 
 		// 	SELECT message_id, chat_jid, sender_jid, timestamp, is_from_me, text, has_media, reply_to_message_id, edited, forwarded
 		err := rows.Scan(
@@ -1029,12 +1034,13 @@ func (ms *MessageStore) GetDecodedMessagesPaged(chatJID string, beforeTimestamp 
 			&replyTo,
 			&msg.Edited,
 			&msg.Forwarded,
-			&msg.Type,
+			&msgType,
 		)
 		if err != nil {
 			log.Println("Failed to scan decoded message:", err)
 			continue
 		}
+		msg.Type = mtypes.MediaType(msgType.Int32)
 
 		if text.Valid {
 			msg.Text = text.String
@@ -1134,6 +1140,7 @@ func (ms *MessageStore) GetDecodedMessage(chatJID string, messageID string) (*De
 		var msg DecodedMessage
 		var replyTo sql.NullString
 		var text sql.NullString
+		var msgType sql.NullInt32
 
 		err := tx.QueryRow(query.SelectDecodedMessageByChatAndID, chatJID, messageID).Scan(
 			&msg.MessageID,
@@ -1145,13 +1152,14 @@ func (ms *MessageStore) GetDecodedMessage(chatJID string, messageID string) (*De
 			&replyTo,
 			&msg.Edited,
 			&msg.Forwarded,
-			&msg.Type,
+			&msgType,
 		)
 
 		if err != nil {
 			resultErr = err
 			return nil
 		}
+		msg.Type = mtypes.MediaType(msgType.Int32)
 
 		if text.Valid {
 			msg.Text = text.String
@@ -1201,6 +1209,7 @@ func (ms *MessageStore) GetDecodedMessage(chatJID string, messageID string) (*De
 func (ms *MessageStore) GetDecodedChatList() ([]DecodedMessage, error) {
 	rows, err := ms.db.Query(query.SelectDecodedChatList)
 	if err != nil {
+		log.Println("Failed to query decoded chat list:", err)
 		return nil, err
 	}
 	defer rows.Close()
@@ -1211,6 +1220,7 @@ func (ms *MessageStore) GetDecodedChatList() ([]DecodedMessage, error) {
 		var msg DecodedMessage
 		var replyTo sql.NullString
 		var text sql.NullString
+		var msgType sql.NullInt32
 
 		err := rows.Scan(
 			&msg.MessageID,
@@ -1222,12 +1232,14 @@ func (ms *MessageStore) GetDecodedChatList() ([]DecodedMessage, error) {
 			&replyTo,
 			&msg.Edited,
 			&msg.Forwarded,
-			&msg.Type,
+			&msgType,
 		)
 		if err != nil {
 			log.Println("Failed to scan decoded message for chat list:", err)
 			continue
 		}
+
+		msg.Type = mtypes.MediaType(msgType.Int32)
 
 		if text.Valid {
 			msg.Text = text.String
