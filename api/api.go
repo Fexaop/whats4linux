@@ -168,24 +168,18 @@ func (a *Api) FetchGroups() ([]wa.Group, error) {
 	return result, nil
 }
 
-func (a *Api) GetContact(jidStr string) (*Contact, error) {
-	jid, err := types.ParseJID(jidStr)
-	if err != nil {
-		return nil, err
-	}
+func (a *Api) GetContact(jid types.JID) (*Contact, error) {
 	if jid.ActualAgent() == types.LIDDomain {
 		canonicalJID, err := a.waClient.Store.LIDs.GetPNForLID(a.ctx, jid)
 		if err == nil {
 			jid = canonicalJID
 		}
 	}
-	// Use base JID (without device) to get contact info
-	baseJID := jid.ToNonAD()
-	contact, err := a.waClient.Store.Contacts.GetContact(a.ctx, baseJID)
+	contact, err := a.waClient.Store.Contacts.GetContact(a.ctx, jid)
 	if err != nil {
 		return nil, err
 	}
-	rawNum := "+" + baseJID.User
+	rawNum := "+" + jid.User
 	// Parse phone number to use as International Format
 	num, err := phonenumbers.Parse(rawNum, "")
 	if err != nil {
@@ -348,7 +342,7 @@ func (a *Api) GetProfile(jidStr string) (Contact, error) {
 		}
 	}
 
-	contact, _ := a.waClient.Store.Contacts.GetContact(a.ctx, targetJID.ToNonAD())
+	contact, _ := a.waClient.Store.Contacts.GetContact(a.ctx, targetJID)
 	rawNum := "+" + targetJID.User
 
 	jid := rawNum
@@ -1067,7 +1061,7 @@ func (a *Api) GetGroupInfo(jidStr string) (Group, error) {
 
 	var participants []GroupParticipant
 	for _, p := range GroupInfo.Participants {
-		contact, err := a.GetContact(p.JID.String())
+		contact, err := a.GetContact(p.JID)
 		if err != nil {
 			return Group{}, fmt.Errorf("Error fetching participant: %w", err)
 		}
@@ -1077,7 +1071,7 @@ func (a *Api) GetGroupInfo(jidStr string) (Group, error) {
 			IsAdmin: p.IsAdmin,
 		})
 	}
-	owner, err := a.GetContact(GroupInfo.OwnerJID.String())
+	owner, err := a.GetContact(GroupInfo.OwnerJID)
 	if err != nil {
 		return Group{}, fmt.Errorf("Error fetching owner: %w", err)
 	}

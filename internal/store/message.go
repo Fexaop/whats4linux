@@ -527,15 +527,23 @@ func (ms *MessageStore) InsertMessage(msg *Message, parsedHTML string) error {
 		// For media messages, store only the media part to save space
 		switch {
 		case msg.Content.GetImageMessage() != nil:
-			rawData, err = encodeMessage(&waE2E.Message{ImageMessage: msg.Content.GetImageMessage()})
+			img := proto.Clone(msg.Content.GetImageMessage()).(*waE2E.ImageMessage)
+			img.JPEGThumbnail = nil
+			rawData, err = encodeMessage(&waE2E.Message{ImageMessage: img})
 		case msg.Content.GetVideoMessage() != nil:
-			rawData, err = encodeMessage(&waE2E.Message{VideoMessage: msg.Content.GetVideoMessage()})
+			vid := proto.Clone(msg.Content.GetVideoMessage()).(*waE2E.VideoMessage)
+			vid.JPEGThumbnail = nil
+			rawData, err = encodeMessage(&waE2E.Message{VideoMessage: vid})
 		case msg.Content.GetAudioMessage() != nil:
 			rawData, err = encodeMessage(&waE2E.Message{AudioMessage: msg.Content.GetAudioMessage()})
 		case msg.Content.GetDocumentMessage() != nil:
-			rawData, err = encodeMessage(&waE2E.Message{DocumentMessage: msg.Content.GetDocumentMessage()})
+			doc := proto.Clone(msg.Content.GetDocumentMessage()).(*waE2E.DocumentMessage)
+			doc.JPEGThumbnail = nil
+			rawData, err = encodeMessage(&waE2E.Message{DocumentMessage: doc})
 		case msg.Content.GetStickerMessage() != nil:
-			rawData, err = encodeMessage(&waE2E.Message{StickerMessage: msg.Content.GetStickerMessage()})
+			stk := proto.Clone(msg.Content.GetStickerMessage()).(*waE2E.StickerMessage)
+			stk.PngThumbnail = nil
+			rawData, err = encodeMessage(&waE2E.Message{StickerMessage: stk})
 		default:
 			// For text and other messages, don't store raw protobuf to save space
 			rawData = nil
@@ -616,15 +624,23 @@ func (ms *MessageStore) UpdateMessageContent(messageID string, content *waE2E.Me
 		// For media messages, store only the media part to save space
 		switch {
 		case content.GetImageMessage() != nil:
-			rawData, err = encodeMessage(&waE2E.Message{ImageMessage: content.GetImageMessage()})
+			img := proto.Clone(content.GetImageMessage()).(*waE2E.ImageMessage)
+			img.JPEGThumbnail = nil
+			rawData, err = encodeMessage(&waE2E.Message{ImageMessage: img})
 		case content.GetVideoMessage() != nil:
-			rawData, err = encodeMessage(&waE2E.Message{VideoMessage: content.GetVideoMessage()})
+			vid := proto.Clone(content.GetVideoMessage()).(*waE2E.VideoMessage)
+			vid.JPEGThumbnail = nil
+			rawData, err = encodeMessage(&waE2E.Message{VideoMessage: vid})
 		case content.GetAudioMessage() != nil:
 			rawData, err = encodeMessage(&waE2E.Message{AudioMessage: content.GetAudioMessage()})
 		case content.GetDocumentMessage() != nil:
-			rawData, err = encodeMessage(&waE2E.Message{DocumentMessage: content.GetDocumentMessage()})
+			doc := proto.Clone(content.GetDocumentMessage()).(*waE2E.DocumentMessage)
+			doc.JPEGThumbnail = nil
+			rawData, err = encodeMessage(&waE2E.Message{DocumentMessage: doc})
 		case content.GetStickerMessage() != nil:
-			rawData, err = encodeMessage(&waE2E.Message{StickerMessage: content.GetStickerMessage()})
+			stk := proto.Clone(content.GetStickerMessage()).(*waE2E.StickerMessage)
+			stk.PngThumbnail = nil
+			rawData, err = encodeMessage(&waE2E.Message{StickerMessage: stk})
 		default:
 			// For text and other messages, don't store raw protobuf to save space
 			rawData = nil
