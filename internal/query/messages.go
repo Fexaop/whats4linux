@@ -10,47 +10,41 @@ const (
 		sender_jid TEXT NOT NULL,
 		timestamp INTEGER NOT NULL,
 		is_from_me BOOLEAN NOT NULL,
-		type INTEGER NOT NULL,
 		text TEXT,
-		media_type INTEGER,
+		has_media BOOLEAN DEFAULT FALSE,
 		reply_to_message_id TEXT,
 		edited BOOLEAN DEFAULT FALSE,
-		forwarded BOOLEAN DEFAULT FALSE
+		forwarded BOOLEAN DEFAULT FALSE,
 	);
 	CREATE INDEX IF NOT EXISTS idx_messages_chat_jid ON messages(chat_jid);
 	CREATE INDEX IF NOT EXISTS idx_messages_sender_jid ON messages(sender_jid);
 	CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp DESC);
 	`
 
-	InsertDecodedMessage = `
+	InsertMessage = `
 	INSERT OR REPLACE INTO messages 
-	(message_id, chat_jid, sender_jid, timestamp, is_from_me, type, text, media_type, reply_to_message_id, edited, forwarded)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	(message_id, chat_jid, sender_jid, timestamp, is_from_me, text, has_media, reply_to_message_id, edited, forwarded)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
-	SelectDecodedMessageByID = `
-	SELECT message_id, chat_jid, sender_jid, timestamp, is_from_me, type, text, media_type, reply_to_message_id, edited, forwarded
+	UpdateMessage = `
+	UPDATE messages
+	SET text = ?, edited = TRUE
+	WHERE message_id = ?
+	`
+
+	SelectMessageByID = `
+	SELECT chat_jid, sender_jid, timestamp, is_from_me, text, has_media, reply_to_message_id, edited, forwarded
 	FROM messages
 	WHERE message_id = ?
 	`
 
-	SelectMessageWithRawByID = `
-	SELECT message_id, chat_jid, sender_jid, timestamp, is_from_me, type, text, media_type, reply_to_message_id, edited, forwarded
+	SelectDecodedMessageByChatAndID = `
+	SELECT sender_jid, timestamp, is_from_me, text, has_media, reply_to_message_id, edited, forwarded, mm.type
 	FROM messages
-	WHERE message_id = ?
-	`
-
-	SelectMessageWithRawByChatAndID = `
-	SELECT message_id, chat_jid, sender_jid, timestamp, is_from_me, type, text, media_type, reply_to_message_id, edited, forwarded
-	FROM messages
+	LEFT JOIN message_media AS mm ON mm.message_id = messages.message_id
 	WHERE chat_jid = ? AND message_id = ?
 	LIMIT 1
-	`
-
-	UpdateDecodedMessage = `
-	UPDATE messages
-	SET text = ?, type = ?, edited = TRUE
-	WHERE message_id = ?
 	`
 
 	// Migration queries for messages.db
@@ -66,32 +60,36 @@ const (
 	`
 
 	// Messages.db paged queries (for frontend)
-	SelectDecodedMessagesByChatBeforeTimestamp = `
-	SELECT message_id, chat_jid, sender_jid, timestamp, is_from_me, type, text, media_type, reply_to_message_id, edited, forwarded
+	SelectMessagesByChatBeforeTimestamp = `
+	SELECT m.message_id, m.chat_jid, m.sender_jid, m.timestamp, m.is_from_me, m.text, m.has_media, m.reply_to_message_id, m.edited, m.forwarded, mm.type
 	FROM (
-		SELECT message_id, chat_jid, sender_jid, timestamp, is_from_me, type, text, media_type, reply_to_message_id, edited, forwarded
+		SELECT message_id, chat_jid, sender_jid, timestamp, is_from_me, text, has_media, reply_to_message_id, edited, forwarded
 		FROM messages
 		WHERE chat_jid = ? AND timestamp < ?
 		ORDER BY timestamp DESC
 		LIMIT ?
-	)
+	) AS m 
+	LEFT JOIN message_media AS mm
+    	ON mm.message_id = m.message_id
 	ORDER BY timestamp ASC
 	`
 
-	SelectLatestDecodedMessagesByChat = `
-	SELECT message_id, chat_jid, sender_jid, timestamp, is_from_me, type, text, media_type, reply_to_message_id, edited, forwarded
+	SelectLatestMessagesByChat = `
+	SELECT m.message_id, m.chat_jid, m.sender_jid, m.timestamp, m.is_from_me, m.text, m.has_media, m.reply_to_message_id, m.edited, m.forwarded, mm.type
 	FROM (
-		SELECT message_id, chat_jid, sender_jid, timestamp, is_from_me, type, text, media_type, reply_to_message_id, edited, forwarded
+		SELECT message_id, chat_jid, sender_jid, timestamp, is_from_me, text, reply_to_message_id, edited, forwarded
 		FROM messages
 		WHERE chat_jid = ?
 		ORDER BY timestamp DESC
 		LIMIT ?
-	)
+	) AS m
+	LEFT JOIN message_media AS mm
+    	ON mm.message_id = m.message_id
 	ORDER BY timestamp ASC
 	`
 
-	SelectDecodedMessageByChatAndID = `
-	SELECT message_id, chat_jid, sender_jid, timestamp, is_from_me, type, text, media_type, reply_to_message_id, edited, forwarded
+	SelectMessageByChatAndID = `
+	SELECT message_id, chat_jid, sender_jid, timestamp, is_from_me, text, reply_to_message_id, edited, forwarded
 	FROM messages
 	WHERE chat_jid = ? AND message_id = ?
 	LIMIT 1
@@ -99,16 +97,18 @@ const (
 
 	// Chat list from messages.db
 	SelectDecodedChatList = `
-	SELECT message_id, chat_jid, sender_jid, timestamp, is_from_me, type, text, media_type, reply_to_message_id, edited, forwarded
+	SELECT message_id, chat_jid, sender_jid, timestamp, is_from_me, text, reply_to_message_id, edited, forwarded, mm.type
 	FROM (
 		SELECT 
-			message_id, chat_jid, sender_jid, timestamp, is_from_me, type, text, media_type, reply_to_message_id, edited, forwarded,
+			message_id, chat_jid, sender_jid, timestamp, is_from_me, type, text, reply_to_message_id, edited, forwarded,
 			ROW_NUMBER() OVER (
 				PARTITION BY chat_jid
 				ORDER BY timestamp DESC
 			) AS rn
 		FROM messages
 	)
+	LEFT JOIN message_media AS mm
+    	ON mm.message_id = m.message_id
 	WHERE rn = 1
 	ORDER BY timestamp DESC;
 	`

@@ -4,27 +4,17 @@ import (
 	"context"
 	"database/sql"
 	"log"
-	"strings"
 	"time"
 
-	query "github.com/lugvitc/whats4linux/internal/db"
 	"github.com/lugvitc/whats4linux/internal/misc"
+	"github.com/lugvitc/whats4linux/internal/query"
+	mtypes "github.com/lugvitc/whats4linux/internal/types"
+	"github.com/lugvitc/whats4linux/internal/wa"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
-	"google.golang.org/protobuf/proto"
 )
-
-func encodeMessage(msg *waE2E.Message) ([]byte, error) {
-	return proto.Marshal(msg)
-}
-
-func decodeMessage(data []byte) (*waE2E.Message, error) {
-	var msg waE2E.Message
-	err := proto.Unmarshal(data, &msg)
-	return &msg, err
-}
 
 type Reaction struct {
 	ID        int    `json:"id"`
@@ -33,12 +23,14 @@ type Reaction struct {
 	Emoji     string `json:"emoji"`
 }
 
-type Message struct {
-	Info      types.MessageInfo
-	Content   *waE2E.Message
-	Edited    bool
-	Forwarded bool
-	Reactions []Reaction
+type ExtendedMessage struct {
+	Info             types.MessageInfo
+	Text             string
+	ReplyToMessageID string
+	Media            *wa.Media
+	Edited           bool
+	Forwarded        bool
+	Reactions        []Reaction
 }
 
 // ChatMessage represents a chat in the chat list
@@ -59,8 +51,10 @@ type MessageStore struct {
 	mCache        misc.VMap[string, uint8]
 	reactionCache misc.NMap[string, string, []string]
 
-	stmtInsert *sql.Stmt
-	stmtUpdate *sql.Stmt
+	stmtInsertMessage *sql.Stmt
+	stmtInsertMedia   *sql.Stmt
+	stmtUpdateMessage *sql.Stmt
+	stmtUpdateMedia   *sql.Stmt
 
 	writeCh chan writeJob
 }
@@ -73,8 +67,8 @@ func NewMessageStore() (*MessageStore, error) {
 
 	ms := &MessageStore{
 		db:            db,
-		chatListMap:   misc.NewVMap[string, ChatMessage](),
 		mCache:        misc.NewVMap[string, uint8](),
+		chatListMap:   misc.NewVMap[string, ChatMessage](),
 		reactionCache: misc.NewNMap[string, string, []string](),
 		writeCh:       make(chan writeJob, 100),
 	}
@@ -83,6 +77,10 @@ func NewMessageStore() (*MessageStore, error) {
 
 	err = ms.runSync(func(tx *sql.Tx) error {
 		_, err := tx.Exec(query.CreateMessagesTable)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(query.CreateMessageMediaTable)
 		if err != nil {
 			return err
 		}
@@ -97,11 +95,19 @@ func NewMessageStore() (*MessageStore, error) {
 
 	err = ms.runSync(func(tx *sql.Tx) error {
 		var err error
-		ms.stmtInsert, err = tx.Prepare(query.InsertDecodedMessage)
+		ms.stmtInsertMessage, err = tx.Prepare(query.InsertMessage)
 		if err != nil {
 			return err
 		}
-		ms.stmtUpdate, err = tx.Prepare(query.UpdateDecodedMessage)
+		ms.stmtInsertMedia, err = tx.Prepare(query.InsertMessageMedia)
+		if err != nil {
+			return err
+		}
+		ms.stmtUpdateMessage, err = tx.Prepare(query.UpdateMessage)
+		if err != nil {
+			return err
+		}
+		ms.stmtUpdateMedia, err = tx.Prepare(query.UpdateMessageMediaByMessageID)
 		return err
 	})
 
@@ -157,24 +163,6 @@ func openDB() (*sql.DB, error) {
 
 	for _, p := range pragmas {
 		if _, err := db.Exec(p); err != nil {
-			db.Close()
-			return nil, err
-		}
-	}
-
-	// Migration: Add raw_message column if it doesn't exist
-	if _, err := db.Exec(`ALTER TABLE messages ADD COLUMN raw_message BLOB;`); err != nil {
-		// Ignore error if column already exists
-		if !strings.Contains(err.Error(), "duplicate column name") {
-			db.Close()
-			return nil, err
-		}
-	}
-
-	// Migration: Add forwarded column if it doesn't exist
-	if _, err := db.Exec(`ALTER TABLE messages ADD COLUMN forwarded BOOLEAN DEFAULT FALSE;`); err != nil {
-		// Ignore error if column already exists
-		if !strings.Contains(err.Error(), "duplicate column name") {
 			db.Close()
 			return nil, err
 		}
@@ -357,18 +345,12 @@ func (ms *MessageStore) ProcessMessageEvent(ctx context.Context, sd store.LIDSto
 
 	chat := msg.Info.Chat.User
 
-	m := Message{
-		Info:    msg.Info,
-		Content: msg.Message,
-		Edited:  false,
-	}
-
 	// Update chatListMap with the new latest message
 	var messageText string
 	if parsedHTML != "" {
 		messageText = parsedHTML
 	} else {
-		messageText = ExtractMessageText(m.Content)
+		messageText = ExtractMessageText(msg.Message)
 	}
 	sender := msg.Info.PushName
 	if sender == "" && msg.Info.Sender.User != "" {
@@ -393,7 +375,7 @@ func (ms *MessageStore) ProcessMessageEvent(ctx context.Context, sd store.LIDSto
 	}
 
 	ms.mCache.Set(msg.Info.ID, 1)
-	err := ms.InsertMessage(&m, parsedHTML)
+	err := ms.InsertMessage(&msg.Info, msg.Message, parsedHTML)
 	if err != nil {
 		log.Println("Failed to insert message:", err)
 		return ""
@@ -402,118 +384,64 @@ func (ms *MessageStore) ProcessMessageEvent(ctx context.Context, sd store.LIDSto
 }
 
 // InsertMessage inserts a new message into messages.db
-func (ms *MessageStore) InsertMessage(msg *Message, parsedHTML string) error {
+func (ms *MessageStore) InsertMessage(info *types.MessageInfo, msg *waE2E.Message, parsedHTML string) error {
 	// Handle reaction messages differently
-	if msg.Content.GetReactionMessage() != nil {
-		reactionMsg := msg.Content.GetReactionMessage()
+	if msg.GetReactionMessage() != nil {
+		reactionMsg := msg.GetReactionMessage()
 		targetID := reactionMsg.GetKey().GetID()
 		reaction := reactionMsg.GetText()
-		senderJID := msg.Info.Sender.String()
-
+		senderJID := info.Sender.String()
 		return ms.AddReactionToMessage(targetID, reaction, senderJID)
 	}
 
-	var msgType query.MessageType = query.MessageTypeText
-	var mediaType query.MediaType
-	var text string
-	var forwarded bool
+	var (
+		text, replyToMessageID string
+		forwarded              = false
+		emc                    wa.ExtendedMediaContent
+		mediaType              mtypes.MediaType
+		width, height          int
+	)
 
-	// Extract mentions if it's an extended text message
-	var replyToMessageID string
-	if msg.Content.GetExtendedTextMessage() != nil && msg.Content.GetExtendedTextMessage().GetContextInfo() != nil {
-		replyToMessageID = msg.Content.GetExtendedTextMessage().GetContextInfo().GetStanzaID()
-		forwarded = msg.Content.GetExtendedTextMessage().GetContextInfo().GetIsForwarded()
+	switch {
+	case msg.GetConversation() != "":
+		text = msg.GetConversation()
+	case msg.GetExtendedTextMessage() != nil:
+		contextInfo := msg.GetExtendedTextMessage().GetContextInfo()
+		text = msg.GetExtendedTextMessage().GetText()
+		replyToMessageID = contextInfo.GetStanzaID()
+		forwarded = contextInfo.GetIsForwarded()
 	}
 
-	// Check forwarded status for other message types
 	switch {
-	case msg.Content.GetImageMessage() != nil:
-		if msg.Content.GetImageMessage().GetContextInfo() != nil {
-			forwarded = msg.Content.GetImageMessage().GetContextInfo().GetIsForwarded()
-		}
-	case msg.Content.GetVideoMessage() != nil:
-		if msg.Content.GetVideoMessage().GetContextInfo() != nil {
-			forwarded = msg.Content.GetVideoMessage().GetContextInfo().GetIsForwarded()
-		}
-	case msg.Content.GetAudioMessage() != nil:
-		if msg.Content.GetAudioMessage().GetContextInfo() != nil {
-			forwarded = msg.Content.GetAudioMessage().GetContextInfo().GetIsForwarded()
-		}
-	case msg.Content.GetDocumentMessage() != nil:
-		if msg.Content.GetDocumentMessage().GetContextInfo() != nil {
-			forwarded = msg.Content.GetDocumentMessage().GetContextInfo().GetIsForwarded()
-		}
-	case msg.Content.GetStickerMessage() != nil:
-		if msg.Content.GetStickerMessage().GetContextInfo() != nil {
-			forwarded = msg.Content.GetStickerMessage().GetContextInfo().GetIsForwarded()
-		}
-	}
-
-	// Serialize raw message for media types
-
-	// Determine message type and initial text content
-	switch {
-	case msg.Content.GetImageMessage() != nil:
-		msgType = query.MessageTypeImage
-		mediaType = query.MediaTypeImage
-		text = msg.Content.GetImageMessage().GetCaption()
-
-	case msg.Content.GetVideoMessage() != nil:
-		msgType = query.MessageTypeVideo
-		mediaType = query.MediaTypeVideo
-		text = msg.Content.GetVideoMessage().GetCaption()
-	case msg.Content.GetAudioMessage() != nil:
-		msgType = query.MessageTypeAudio
-		mediaType = query.MediaTypeAudio
-	case msg.Content.GetDocumentMessage() != nil:
-		msgType = query.MessageTypeDocument
-		mediaType = query.MediaTypeDocument
-		text = msg.Content.GetDocumentMessage().GetFileName()
-	case msg.Content.GetStickerMessage() != nil:
-		msgType = query.MessageTypeSticker
-		mediaType = query.MediaTypeSticker
-	case msg.Content.GetConversation() != "":
-		text = msg.Content.GetConversation()
-	case msg.Content.GetExtendedTextMessage() != nil:
-		text = msg.Content.GetExtendedTextMessage().GetText()
+	case msg.GetImageMessage() != nil:
+		emc = msg.GetImageMessage()
+		text = msg.GetImageMessage().GetCaption()
+		mediaType = mtypes.MediaTypeImage
+		width = int(msg.GetImageMessage().GetWidth())
+		height = int(msg.GetImageMessage().GetHeight())
+	case msg.GetVideoMessage() != nil:
+		emc = msg.GetVideoMessage()
+		text = msg.GetVideoMessage().GetCaption()
+		mediaType = mtypes.MediaTypeVideo
+	case msg.GetDocumentMessage() != nil:
+		emc = msg.GetDocumentMessage()
+		text = msg.GetDocumentMessage().GetCaption()
+		mediaType = mtypes.MediaTypeDocument
+	case msg.GetAudioMessage() != nil:
+		emc = msg.GetAudioMessage()
+		mediaType = mtypes.MediaTypeAudio
+	case msg.GetStickerMessage() != nil:
+		emc = msg.GetStickerMessage()
+		mediaType = mtypes.MediaTypeSticker
+		width = int(msg.GetStickerMessage().GetWidth())
+		height = int(msg.GetStickerMessage().GetHeight())
 	default:
-		// Log unsupported message type with detailed information
-		log.Printf("Skipping unsupported message type for message ID %s in chat %s", msg.Info.ID, msg.Info.Chat.String())
-		log.Printf("Message content details:")
-		switch {
-		case msg.Content.GetConversation() != "":
-			log.Printf("  - Has conversation: %s", msg.Content.GetConversation())
-		case msg.Content.GetExtendedTextMessage() != nil:
-			log.Printf("  - Has extended text: %s", msg.Content.GetExtendedTextMessage().GetText())
-		case msg.Content.GetImageMessage() != nil:
-			log.Printf("  - Has image message")
-		case msg.Content.GetVideoMessage() != nil:
-			log.Printf("  - Has video message")
-		case msg.Content.GetAudioMessage() != nil:
-			log.Printf("  - Has audio message")
-		case msg.Content.GetDocumentMessage() != nil:
-			log.Printf("  - Has document message")
-		case msg.Content.GetStickerMessage() != nil:
-			log.Printf("  - Has sticker message")
-		case msg.Content.GetContactMessage() != nil:
-			log.Printf("  - Has contact message")
-		case msg.Content.GetLocationMessage() != nil:
-			log.Printf("  - Has location message")
-		case msg.Content.GetLiveLocationMessage() != nil:
-			log.Printf("  - Has live location message")
-		case msg.Content.GetPollCreationMessage() != nil:
-			log.Printf("  - Has poll creation message")
-		case msg.Content.GetPollUpdateMessage() != nil:
-			log.Printf("  - Has poll update message")
-		case msg.Content.GetProtocolMessage() != nil:
-			log.Printf("  - Has protocol message (type: %v)", msg.Content.GetProtocolMessage().GetType())
-		case msg.Content.GetReactionMessage() != nil:
-			log.Printf("  - Has reaction message")
-		case msg.Content.GetSenderKeyDistributionMessage() != nil:
-			log.Printf("  - Has sender key distribution message")
-		}
-		log.Printf("Full message content: %+v", msg.Content)
+		log.Printf("Unknown message content: %+v\n", msg)
 		return nil
+	}
+
+	if !forwarded && emc != nil && emc.GetContextInfo() != nil {
+		forwarded = emc.GetContextInfo().GetIsForwarded()
 	}
 
 	if parsedHTML != "" {
@@ -521,139 +449,104 @@ func (ms *MessageStore) InsertMessage(msg *Message, parsedHTML string) error {
 	}
 
 	return ms.runSync(func(tx *sql.Tx) error {
-		var rawData []byte
-		var err error
-
-		// For media messages, store only the media part to save space
-		switch {
-		case msg.Content.GetImageMessage() != nil:
-			img := proto.Clone(msg.Content.GetImageMessage()).(*waE2E.ImageMessage)
-			img.JPEGThumbnail = nil
-			rawData, err = encodeMessage(&waE2E.Message{ImageMessage: img})
-		case msg.Content.GetVideoMessage() != nil:
-			vid := proto.Clone(msg.Content.GetVideoMessage()).(*waE2E.VideoMessage)
-			vid.JPEGThumbnail = nil
-			rawData, err = encodeMessage(&waE2E.Message{VideoMessage: vid})
-		case msg.Content.GetAudioMessage() != nil:
-			rawData, err = encodeMessage(&waE2E.Message{AudioMessage: msg.Content.GetAudioMessage()})
-		case msg.Content.GetDocumentMessage() != nil:
-			doc := proto.Clone(msg.Content.GetDocumentMessage()).(*waE2E.DocumentMessage)
-			doc.JPEGThumbnail = nil
-			rawData, err = encodeMessage(&waE2E.Message{DocumentMessage: doc})
-		case msg.Content.GetStickerMessage() != nil:
-			stk := proto.Clone(msg.Content.GetStickerMessage()).(*waE2E.StickerMessage)
-			stk.PngThumbnail = nil
-			rawData, err = encodeMessage(&waE2E.Message{StickerMessage: stk})
-		default:
-			// For text and other messages, don't store raw protobuf to save space
-			rawData = nil
-		}
-
-		if err != nil {
-			return err
-		}
-
-		_, err = tx.Stmt(ms.stmtInsert).Exec(
-			msg.Info.ID,
-			msg.Info.Chat.String(),
-			msg.Info.Sender.String(),
-			msg.Info.Timestamp.Unix(),
-			msg.Info.IsFromMe,
-			msgType,
+		_, err := tx.Stmt(ms.stmtInsertMessage).Exec(
+			info.ID,
+			info.Chat.String(),
+			info.Sender.String(),
+			info.Timestamp.Unix(),
+			info.IsFromMe,
 			text,
-			mediaType,
+			emc != nil,
 			replyToMessageID,
-			msg.Edited,
+			false,
 			forwarded,
-			rawData,
 		)
 		if err != nil {
 			return err
 		}
-
-		return nil
+		// no media to process
+		if emc == nil {
+			return nil
+		}
+		_, err = tx.Stmt(ms.stmtInsertMedia).Exec(
+			info.ID,
+			mediaType,
+			emc.GetURL(),
+			emc.GetMimetype(),
+			emc.GetDirectPath(),
+			emc.GetMediaKey(),
+			emc.GetFileSHA256(),
+			emc.GetFileEncSHA256(),
+			width, height,
+		)
+		return err
 	})
 }
 
 // UpdateMessageContent updates an existing message's content
 func (ms *MessageStore) UpdateMessageContent(messageID string, content *waE2E.Message, parsedHTML string) error {
-	var msgType query.MessageType = query.MessageTypeText
-	var text string
 
-	if parsedHTML != "" {
-		text = parsedHTML
-	} else if content.GetConversation() != "" {
+	var (
+		text          string
+		emc           wa.ExtendedMediaContent
+		mediaType     mtypes.MediaType
+		width, height int
+	)
+
+	switch {
+	case content.GetConversation() != "":
 		text = content.GetConversation()
-	} else if content.GetExtendedTextMessage() != nil {
+	case content.GetExtendedTextMessage() != nil:
 		text = content.GetExtendedTextMessage().GetText()
-	} else {
-		switch {
-		case content.GetImageMessage() != nil:
-			msgType = query.MessageTypeImage
-			text = content.GetImageMessage().GetCaption()
-			if text == "" {
-				text = "image"
-			}
-		case content.GetVideoMessage() != nil:
-			msgType = query.MessageTypeVideo
-			text = content.GetVideoMessage().GetCaption()
-			if text == "" {
-				text = "video"
-			}
-		case content.GetAudioMessage() != nil:
-			msgType = query.MessageTypeAudio
-			text = "audio"
-		case content.GetDocumentMessage() != nil:
-			msgType = query.MessageTypeDocument
-			text = content.GetDocumentMessage().GetFileName()
-			if text == "" {
-				text = "document"
-			}
-		case content.GetStickerMessage() != nil:
-			msgType = query.MessageTypeSticker
-			text = "sticker"
-		default:
-			text = "message"
-		}
+	case content.GetImageMessage() != nil:
+		emc = content.GetImageMessage()
+		text = content.GetImageMessage().GetCaption()
+		mediaType = mtypes.MediaTypeImage
+		width = int(content.GetImageMessage().GetWidth())
+		height = int(content.GetImageMessage().GetHeight())
+	case content.GetVideoMessage() != nil:
+		emc = content.GetVideoMessage()
+		text = content.GetVideoMessage().GetCaption()
+		mediaType = mtypes.MediaTypeVideo
+	case content.GetDocumentMessage() != nil:
+		emc = content.GetDocumentMessage()
+		text = content.GetDocumentMessage().GetCaption()
+		mediaType = mtypes.MediaTypeDocument
+	case content.GetAudioMessage() != nil:
+		emc = content.GetAudioMessage()
+		mediaType = mtypes.MediaTypeAudio
+	case content.GetStickerMessage() != nil:
+		emc = content.GetStickerMessage()
+		mediaType = mtypes.MediaTypeSticker
+		width = int(content.GetStickerMessage().GetWidth())
+		height = int(content.GetStickerMessage().GetHeight())
+	default:
+		log.Printf("Unknown message content for update: %+v\n", content)
+		return nil
 	}
 
 	return ms.runSync(func(tx *sql.Tx) error {
-		var rawData []byte
-		var err error
-
-		// For media messages, store only the media part to save space
-		switch {
-		case content.GetImageMessage() != nil:
-			img := proto.Clone(content.GetImageMessage()).(*waE2E.ImageMessage)
-			img.JPEGThumbnail = nil
-			rawData, err = encodeMessage(&waE2E.Message{ImageMessage: img})
-		case content.GetVideoMessage() != nil:
-			vid := proto.Clone(content.GetVideoMessage()).(*waE2E.VideoMessage)
-			vid.JPEGThumbnail = nil
-			rawData, err = encodeMessage(&waE2E.Message{VideoMessage: vid})
-		case content.GetAudioMessage() != nil:
-			rawData, err = encodeMessage(&waE2E.Message{AudioMessage: content.GetAudioMessage()})
-		case content.GetDocumentMessage() != nil:
-			doc := proto.Clone(content.GetDocumentMessage()).(*waE2E.DocumentMessage)
-			doc.JPEGThumbnail = nil
-			rawData, err = encodeMessage(&waE2E.Message{DocumentMessage: doc})
-		case content.GetStickerMessage() != nil:
-			stk := proto.Clone(content.GetStickerMessage()).(*waE2E.StickerMessage)
-			stk.PngThumbnail = nil
-			rawData, err = encodeMessage(&waE2E.Message{StickerMessage: stk})
-		default:
-			// For text and other messages, don't store raw protobuf to save space
-			rawData = nil
-		}
-
+		_, err := tx.Stmt(ms.stmtUpdateMessage).Exec(
+			text,
+			messageID,
+		)
 		if err != nil {
 			return err
 		}
+		// no media to process
+		if emc == nil {
+			return nil
+		}
 
-		_, err = tx.Stmt(ms.stmtUpdate).Exec(
-			text,
-			msgType,
-			rawData,
+		_, err = tx.Stmt(ms.stmtUpdateMedia).Exec(
+			mediaType,
+			emc.GetURL(),
+			emc.GetMimetype(),
+			emc.GetDirectPath(),
+			emc.GetMediaKey(),
+			emc.GetFileSHA256(),
+			emc.GetFileEncSHA256(),
+			width, height,
 			messageID,
 		)
 		return err
@@ -661,56 +554,76 @@ func (ms *MessageStore) UpdateMessageContent(messageID string, content *waE2E.Me
 }
 
 // GetMessageWithRaw returns a message with its raw protobuf content for media download
-func (ms *MessageStore) GetMessageWithRaw(chatJID string, messageID string) (*Message, error) {
+func (ms *MessageStore) GetMessageWithMedia(chatJID string, messageID string) (*ExtendedMessage, error) {
 	var (
-		id        string
-		chat      string
 		sender    string
 		timestamp int64
 		isFromMe  bool
-		msgType   int
 		text      sql.NullString
-		mediaType sql.NullInt64
+		hasMedia  bool
 		replyTo   sql.NullString
 		edited    bool
 		forwarded bool
-		rawData   []byte
 	)
 
-	err := ms.db.QueryRow(query.SelectMessageWithRawByChatAndID, chatJID, messageID).Scan(
-		&id,
-		&chat,
+	err := ms.db.QueryRow(query.SelectMessageByChatAndID, chatJID, messageID).Scan(
 		&sender,
 		&timestamp,
 		&isFromMe,
-		&msgType,
 		&text,
-		&mediaType,
+		&hasMedia,
 		&replyTo,
 		&edited,
 		&forwarded,
-		&rawData,
 	)
 
 	if err != nil {
 		return nil, err
 	}
 
-	chatParsed, _ := types.ParseJID(chat)
+	chatParsed, _ := types.ParseJID(chatJID)
 	senderParsed, _ := types.ParseJID(sender)
 
-	var content *waE2E.Message
-	if len(rawData) > 0 {
-		content, err = decodeMessage(rawData)
+	var media *wa.Media
+
+	if hasMedia {
+		var (
+			mediaType     int
+			url           sql.NullString
+			mimetype      sql.NullString
+			directPath    sql.NullString
+			mediaKey      []byte
+			fileSHA256    []byte
+			fileEncSHA256 []byte
+			width, height int
+		)
+		err = ms.db.QueryRow(query.SelectMessageMediaByMessageID, messageID).Scan(
+			&mediaType,
+			&url,
+			&mimetype,
+			&directPath,
+			&mediaKey,
+			&fileSHA256,
+			&fileEncSHA256,
+			&width,
+			&height,
+		)
 		if err != nil {
-			log.Println("Failed to decode raw message:", err)
-			content = nil
+			return nil, err
 		}
+		media = wa.NewMedia(
+			directPath.String,
+			mediaKey, fileSHA256, fileEncSHA256,
+			url.String,
+			mimetype.String,
+			width, height,
+			mtypes.MediaType(mediaType),
+		)
 	}
 
-	msg := &Message{
+	return &ExtendedMessage{
 		Info: types.MessageInfo{
-			ID:        id,
+			ID:        messageID,
 			Timestamp: time.Unix(timestamp, 0),
 			MessageSource: types.MessageSource{
 				Chat:     chatParsed,
@@ -718,44 +631,38 @@ func (ms *MessageStore) GetMessageWithRaw(chatJID string, messageID string) (*Me
 				IsFromMe: isFromMe,
 			},
 		},
-		Content:   content,
-		Edited:    edited,
-		Forwarded: forwarded,
-	}
-
-	return msg, nil
+		Text:             text.String,
+		ReplyToMessageID: replyTo.String,
+		Media:            media,
+		Edited:           edited,
+		Forwarded:        forwarded,
+	}, nil
 }
 
-// GetMessageByIDWithRaw returns a message by ID with its raw protobuf content
-func (ms *MessageStore) GetMessageByIDWithRaw(messageID string) (*Message, error) {
+// GetMessageWithRaw returns a message with its raw protobuf content for media download
+func (ms *MessageStore) GetMessageWithMediaByID(messageID string) (*ExtendedMessage, error) {
 	var (
-		id        string
 		chat      string
 		sender    string
 		timestamp int64
 		isFromMe  bool
-		msgType   int
 		text      sql.NullString
-		mediaType sql.NullInt64
+		hasMedia  bool
 		replyTo   sql.NullString
 		edited    bool
 		forwarded bool
-		rawData   []byte
 	)
 
-	err := ms.db.QueryRow(query.SelectMessageWithRawByID, messageID).Scan(
-		&id,
+	err := ms.db.QueryRow(query.SelectMessageByID, messageID).Scan(
 		&chat,
 		&sender,
 		&timestamp,
 		&isFromMe,
-		&msgType,
 		&text,
-		&mediaType,
+		&hasMedia,
 		&replyTo,
 		&edited,
 		&forwarded,
-		&rawData,
 	)
 
 	if err != nil {
@@ -765,18 +672,46 @@ func (ms *MessageStore) GetMessageByIDWithRaw(messageID string) (*Message, error
 	chatParsed, _ := types.ParseJID(chat)
 	senderParsed, _ := types.ParseJID(sender)
 
-	var content *waE2E.Message
-	if len(rawData) > 0 {
-		content, err = decodeMessage(rawData)
+	var media *wa.Media
+
+	if hasMedia {
+		var (
+			mediaType     int
+			url           sql.NullString
+			mimetype      sql.NullString
+			directPath    sql.NullString
+			mediaKey      []byte
+			fileSHA256    []byte
+			fileEncSHA256 []byte
+			width, height int
+		)
+		err = ms.db.QueryRow(query.SelectMessageMediaByMessageID, messageID).Scan(
+			&mediaType,
+			&url,
+			&mimetype,
+			&directPath,
+			&mediaKey,
+			&fileSHA256,
+			&fileEncSHA256,
+			&width,
+			&height,
+		)
 		if err != nil {
-			log.Println("Failed to decode raw message:", err)
-			content = nil
+			return nil, err
 		}
+		media = wa.NewMedia(
+			directPath.String,
+			mediaKey, fileSHA256, fileEncSHA256,
+			url.String,
+			mimetype.String,
+			width, height,
+			mtypes.MediaType(mediaType),
+		)
 	}
 
-	msg := &Message{
+	return &ExtendedMessage{
 		Info: types.MessageInfo{
-			ID:        id,
+			ID:        messageID,
 			Timestamp: time.Unix(timestamp, 0),
 			MessageSource: types.MessageSource{
 				Chat:     chatParsed,
@@ -784,12 +719,12 @@ func (ms *MessageStore) GetMessageByIDWithRaw(messageID string) (*Message, error
 				IsFromMe: isFromMe,
 			},
 		},
-		Content:   content,
-		Edited:    edited,
-		Forwarded: forwarded,
-	}
-
-	return msg, nil
+		Text:             text.String,
+		ReplyToMessageID: replyTo.String,
+		Media:            media,
+		Edited:           edited,
+		Forwarded:        forwarded,
+	}, nil
 }
 
 // GetChatList returns the chat list from messages.db
@@ -811,7 +746,6 @@ func (ms *MessageStore) GetChatList() []ChatMessage {
 			isFromMe  bool
 			msgType   int
 			text      sql.NullString
-			mediaType sql.NullInt64
 			replyTo   sql.NullString
 			edited    bool
 			forwarded bool
@@ -823,12 +757,11 @@ func (ms *MessageStore) GetChatList() []ChatMessage {
 			&senderJID,
 			&timestamp,
 			&isFromMe,
-			&msgType,
 			&text,
-			&mediaType,
 			&replyTo,
 			&edited,
 			&forwarded,
+			&msgType,
 		); err != nil {
 			continue
 		}
@@ -994,19 +927,21 @@ func (ms *MessageStore) AddReactionToMessage(targetID, reaction, senderJID strin
 }
 
 // DecodedMessage represents a message from messages.db with decoded fields
+//
+//	SELECT message_id, chat_jid, sender_jid, timestamp, is_from_me, text, has_media, reply_to_message_id, edited, forwarded
 type DecodedMessage struct {
-	MessageID        string     `json:"message_id"`
-	ChatJID          string     `json:"chat_jid"`
-	SenderJID        string     `json:"sender_jid"`
-	Timestamp        int64      `json:"timestamp"`
-	IsFromMe         bool       `json:"is_from_me"`
-	Type             int        `json:"type"`
-	Text             string     `json:"text"`
-	MediaType        int        `json:"media_type"`
-	ReplyToMessageID string     `json:"reply_to_message_id"`
-	Edited           bool       `json:"edited"`
-	Forwarded        bool       `json:"forwarded"`
-	Reactions        []Reaction `json:"reactions"`
+	MessageID        string           `json:"message_id"`
+	ChatJID          string           `json:"chat_jid"`
+	SenderJID        string           `json:"sender_jid"`
+	Timestamp        int64            `json:"timestamp"`
+	IsFromMe         bool             `json:"is_from_me"`
+	Type             mtypes.MediaType `json:"type"`
+	Text             string           `json:"text"`
+	MediaType        int              `json:"media_type"`
+	ReplyToMessageID string           `json:"reply_to_message_id"`
+	Edited           bool             `json:"edited"`
+	Forwarded        bool             `json:"forwarded"`
+	Reactions        []Reaction       `json:"reactions"`
 	// Info provides compatibility with frontend that expects types.MessageInfo structure
 	Info DecodedMessageInfo `json:"Info"`
 	// Content provides a minimal content structure for frontend rendering
@@ -1064,9 +999,9 @@ func (ms *MessageStore) GetDecodedMessagesPaged(chatJID string, beforeTimestamp 
 	var err error
 
 	if beforeTimestamp == 0 {
-		rows, err = ms.db.Query(query.SelectLatestDecodedMessagesByChat, chatJID, limit)
+		rows, err = ms.db.Query(query.SelectLatestMessagesByChat, chatJID, limit)
 	} else {
-		rows, err = ms.db.Query(query.SelectDecodedMessagesByChatBeforeTimestamp, chatJID, beforeTimestamp, limit)
+		rows, err = ms.db.Query(query.SelectMessagesByChatBeforeTimestamp, chatJID, beforeTimestamp, limit)
 	}
 
 	if err != nil {
@@ -1078,22 +1013,21 @@ func (ms *MessageStore) GetDecodedMessagesPaged(chatJID string, beforeTimestamp 
 
 	for rows.Next() {
 		var msg DecodedMessage
-		var mediaType sql.NullInt64
 		var replyTo sql.NullString
 		var text sql.NullString
 
+		// 	SELECT message_id, chat_jid, sender_jid, timestamp, is_from_me, text, has_media, reply_to_message_id, edited, forwarded
 		err := rows.Scan(
 			&msg.MessageID,
 			&msg.ChatJID,
 			&msg.SenderJID,
 			&msg.Timestamp,
 			&msg.IsFromMe,
-			&msg.Type,
 			&text,
-			&mediaType,
 			&replyTo,
 			&msg.Edited,
 			&msg.Forwarded,
+			&msg.Type,
 		)
 		if err != nil {
 			log.Println("Failed to scan decoded message:", err)
@@ -1103,12 +1037,11 @@ func (ms *MessageStore) GetDecodedMessagesPaged(chatJID string, beforeTimestamp 
 		if text.Valid {
 			msg.Text = text.String
 		}
-		if mediaType.Valid {
-			msg.MediaType = int(mediaType.Int64)
-		}
 		if replyTo.Valid {
 			msg.ReplyToMessageID = replyTo.String
 		}
+
+		msg.MediaType = int(msg.Type)
 
 		// Load reactions for this message
 		reactions, err := ms.GetReactionsByMessageID(msg.MessageID)
@@ -1149,8 +1082,8 @@ func (ms *MessageStore) buildDecodedContent(msg *DecodedMessage) *DecodedMessage
 	}
 
 	// Based on message type, populate the appropriate content field
-	switch query.MessageType(msg.Type) {
-	case query.MessageTypeText:
+	switch mtypes.MediaType(msg.Type) {
+	case mtypes.MediaTypeNone:
 		if contextInfo != nil {
 			content.ExtendedTextMessage = &ExtendedTextContent{
 				Text:        msg.Text,
@@ -1159,26 +1092,26 @@ func (ms *MessageStore) buildDecodedContent(msg *DecodedMessage) *DecodedMessage
 		} else {
 			content.Conversation = msg.Text
 		}
-	case query.MessageTypeImage:
+	case mtypes.MediaTypeImage:
 		content.ImageMessage = &MediaMessageContent{
 			Caption:     msg.Text,
 			ContextInfo: contextInfo,
 		}
-	case query.MessageTypeVideo:
+	case mtypes.MediaTypeVideo:
 		content.VideoMessage = &MediaMessageContent{
 			Caption:     msg.Text,
 			ContextInfo: contextInfo,
 		}
-	case query.MessageTypeAudio:
+	case mtypes.MediaTypeAudio:
 		content.AudioMessage = &MediaMessageContent{
 			ContextInfo: contextInfo,
 		}
-	case query.MessageTypeDocument:
+	case mtypes.MediaTypeDocument:
 		content.DocumentMessage = &DocumentMessageContent{
 			FileName:    msg.Text,
 			ContextInfo: contextInfo,
 		}
-	case query.MessageTypeSticker:
+	case mtypes.MediaTypeSticker:
 		content.StickerMessage = &MediaMessageContent{
 			ContextInfo: contextInfo,
 		}
@@ -1197,7 +1130,6 @@ func (ms *MessageStore) GetDecodedMessage(chatJID string, messageID string) (*De
 	// Use runSync to ensure read consistency with pending writes
 	err := ms.runSync(func(tx *sql.Tx) error {
 		var msg DecodedMessage
-		var mediaType sql.NullInt64
 		var replyTo sql.NullString
 		var text sql.NullString
 
@@ -1207,12 +1139,11 @@ func (ms *MessageStore) GetDecodedMessage(chatJID string, messageID string) (*De
 			&msg.SenderJID,
 			&msg.Timestamp,
 			&msg.IsFromMe,
-			&msg.Type,
 			&text,
-			&mediaType,
 			&replyTo,
 			&msg.Edited,
 			&msg.Forwarded,
+			&msg.Type,
 		)
 
 		if err != nil {
@@ -1223,12 +1154,10 @@ func (ms *MessageStore) GetDecodedMessage(chatJID string, messageID string) (*De
 		if text.Valid {
 			msg.Text = text.String
 		}
-		if mediaType.Valid {
-			msg.MediaType = int(mediaType.Int64)
-		}
 		if replyTo.Valid {
 			msg.ReplyToMessageID = replyTo.String
 		}
+		msg.MediaType = int(msg.Type)
 
 		result = &msg
 		return nil
@@ -1278,7 +1207,6 @@ func (ms *MessageStore) GetDecodedChatList() ([]DecodedMessage, error) {
 
 	for rows.Next() {
 		var msg DecodedMessage
-		var mediaType sql.NullInt64
 		var replyTo sql.NullString
 		var text sql.NullString
 
@@ -1288,12 +1216,11 @@ func (ms *MessageStore) GetDecodedChatList() ([]DecodedMessage, error) {
 			&msg.SenderJID,
 			&msg.Timestamp,
 			&msg.IsFromMe,
-			&msg.Type,
 			&text,
-			&mediaType,
 			&replyTo,
 			&msg.Edited,
 			&msg.Forwarded,
+			&msg.Type,
 		)
 		if err != nil {
 			log.Println("Failed to scan decoded message for chat list:", err)
@@ -1303,12 +1230,12 @@ func (ms *MessageStore) GetDecodedChatList() ([]DecodedMessage, error) {
 		if text.Valid {
 			msg.Text = text.String
 		}
-		if mediaType.Valid {
-			msg.MediaType = int(mediaType.Int64)
-		}
+
 		if replyTo.Valid {
 			msg.ReplyToMessageID = replyTo.String
 		}
+
+		msg.MediaType = int(msg.Type)
 
 		// Populate Info for frontend compatibility
 		msg.Info = DecodedMessageInfo{

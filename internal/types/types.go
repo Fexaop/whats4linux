@@ -1,16 +1,6 @@
 package types
 
-type MessageType uint8
-
-const (
-	MessageTypeText MessageType = iota
-	MessageTypeImage
-	MessageTypeVideo
-	MessageTypeAudio
-	MessageTypeDocument
-	MessageTypeSticker
-	MessageTypeContact
-)
+import "go.mau.fi/whatsmeow"
 
 type MediaType uint8
 
@@ -21,4 +11,21 @@ const (
 	MediaTypeAudio
 	MediaTypeDocument
 	MediaTypeSticker
+	MediaTypeStickerMetadata
+	MediaTypeStickerPack
+	MediaTypeHistorySync
+	MediaTypeAppState
 )
+
+var GeneralMediaMap = map[MediaType]whatsmeow.MediaType{
+	MediaTypeImage:           whatsmeow.MediaImage,
+	MediaTypeAudio:           whatsmeow.MediaAudio,
+	MediaTypeVideo:           whatsmeow.MediaVideo,
+	MediaTypeDocument:        whatsmeow.MediaDocument,
+	MediaTypeSticker:         whatsmeow.MediaImage,
+	MediaTypeStickerMetadata: whatsmeow.MediaImage,
+
+	MediaTypeStickerPack: whatsmeow.MediaStickerPack,
+	MediaTypeHistorySync: whatsmeow.MediaHistory,
+	MediaTypeAppState:    whatsmeow.MediaAppState,
+}
