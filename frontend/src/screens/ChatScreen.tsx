@@ -14,6 +14,7 @@ import {
   EmptyStateIcon,
 } from "../assets/svgs/chat_icons"
 import { SearchIcon } from "../assets/svgs/settings_icons"
+import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "../components/common/resizable"
 
 const USE_SAMPLE_DATA = false
 
@@ -399,57 +400,63 @@ export function ChatListScreen({ onOpenSettings }: ChatListScreenProps) {
 
   return (
     <div className="flex h-screen bg-light-secondary dark:bg-black overflow-hidden">
-      {/* Chat List Sidebar */}
-      <div
-        className={clsx(
-          "flex-col w-full md:w-120",
-          "border-r border-gray-200 dark:border-dark-tertiary",
-          "bg-white dark:bg-dark-bg h-full",
-          selectedChatId ? "hidden md:flex" : "flex",
-        )}
-      >
-        <Header onOpenSettings={onOpenSettings} />
-        <SearchBar value={searchTerm} onChange={setSearchTerm} />
+      <ResizablePanelGroup direction="horizontal" className="h-full">
+        {/* Chat List Sidebar */}
+        <ResizablePanel
+          defaultSize={30}
+          className={clsx(
+            "flex-col",
+            "border-r border-gray-200 dark:border-dark-tertiary",
+            "bg-white dark:bg-dark-bg h-full",
+            selectedChatId ? "hidden md:flex" : "flex",
+          )}
+        >
+          <Header onOpenSettings={onOpenSettings} />
+          <SearchBar value={searchTerm} onChange={setSearchTerm} />
 
-        <div className="flex-1 overflow-y-auto">
-          {filteredChatIds.length === 0 ? (
-            <EmptyState
-              hasChats={totalChats > 0}
-              isLoading={isFetchingRef.current}
-              onRefresh={fetchChats}
+          <div className="flex-1 overflow-y-auto">
+            {filteredChatIds.length === 0 ? (
+              <EmptyState
+                hasChats={totalChats > 0}
+                isLoading={isFetchingRef.current}
+                onRefresh={fetchChats}
+              />
+            ) : (
+              filteredChatIds.map(chatId => (
+                <ChatListItem
+                  key={chatId}
+                  chatId={chatId}
+                  isSelected={selectedChatId === chatId}
+                  onSelect={handleChatSelect}
+                />
+              ))
+            )}
+          </div>
+        </ResizablePanel>
+
+        <ResizableHandle />
+
+        {/* Chat Detail */}
+        <ResizablePanel
+          defaultSize={70}
+          className={clsx(
+            "flex-col h-full",
+            "bg-[#efeae2] dark:bg-dark-secondary relative",
+            selectedChatId ? "flex" : "hidden md:flex",
+          )}
+        >
+          {selectedChatId ? (
+            <ChatDetail
+              chatId={selectedChatId}
+              chatName={selectedChatName}
+              chatAvatar={selectedChatAvatar}
+              onBack={handleBack}
             />
           ) : (
-            filteredChatIds.map(chatId => (
-              <ChatListItem
-                key={chatId}
-                chatId={chatId}
-                isSelected={selectedChatId === chatId}
-                onSelect={handleChatSelect}
-              />
-            ))
+            <WelcomeScreen />
           )}
-        </div>
-      </div>
-
-      {/* Chat Detail */}
-      <div
-        className={clsx(
-          "flex-1 flex-col h-full",
-          "bg-[#efeae2] dark:bg-dark-secondary relative",
-          selectedChatId ? "flex" : "hidden md:flex",
-        )}
-      >
-        {selectedChatId ? (
-          <ChatDetail
-            chatId={selectedChatId}
-            chatName={selectedChatName}
-            chatAvatar={selectedChatAvatar}
-            onBack={handleBack}
-          />
-        ) : (
-          <WelcomeScreen />
-        )}
-      </div>
+        </ResizablePanel>
+      </ResizablePanelGroup>
     </div>
   )
 }

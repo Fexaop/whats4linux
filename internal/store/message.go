@@ -1142,18 +1142,9 @@ func (ms *MessageStore) buildDecodedContent(msg *DecodedMessage) *DecodedMessage
 	// Build context info if there's a reply
 	var contextInfo *ContextInfo
 	if msg.ReplyToMessageID != "" {
-		// Fetch the quoted message
-		quotedMsg, err := ms.GetDecodedMessage(msg.ChatJID, msg.ReplyToMessageID)
-		if err == nil && quotedMsg != nil {
-			contextInfo = &ContextInfo{
-				StanzaID:      msg.ReplyToMessageID,
-				Participant:   quotedMsg.SenderJID,
-				QuotedMessage: quotedMsg.Content,
-			}
-		} else {
-			contextInfo = &ContextInfo{
-				StanzaID: msg.ReplyToMessageID,
-			}
+		// Fetch the quoted message, but don't recursively load its content to avoid race conditions
+		contextInfo = &ContextInfo{
+			StanzaID: msg.ReplyToMessageID,
 		}
 	}
 
@@ -1200,59 +1191,79 @@ func (ms *MessageStore) buildDecodedContent(msg *DecodedMessage) *DecodedMessage
 
 // GetDecodedMessage returns a single decoded message from messages.db
 func (ms *MessageStore) GetDecodedMessage(chatJID string, messageID string) (*DecodedMessage, error) {
-	var msg DecodedMessage
-	var mediaType sql.NullInt64
-	var replyTo sql.NullString
-	var text sql.NullString
+	var result *DecodedMessage
+	var resultErr error
 
-	err := ms.db.QueryRow(query.SelectDecodedMessageByChatAndID, chatJID, messageID).Scan(
-		&msg.MessageID,
-		&msg.ChatJID,
-		&msg.SenderJID,
-		&msg.Timestamp,
-		&msg.IsFromMe,
-		&msg.Type,
-		&text,
-		&mediaType,
-		&replyTo,
-		&msg.Edited,
-		&msg.Forwarded,
-	)
+	// Use runSync to ensure read consistency with pending writes
+	err := ms.runSync(func(tx *sql.Tx) error {
+		var msg DecodedMessage
+		var mediaType sql.NullInt64
+		var replyTo sql.NullString
+		var text sql.NullString
+
+		err := tx.QueryRow(query.SelectDecodedMessageByChatAndID, chatJID, messageID).Scan(
+			&msg.MessageID,
+			&msg.ChatJID,
+			&msg.SenderJID,
+			&msg.Timestamp,
+			&msg.IsFromMe,
+			&msg.Type,
+			&text,
+			&mediaType,
+			&replyTo,
+			&msg.Edited,
+			&msg.Forwarded,
+		)
+
+		if err != nil {
+			resultErr = err
+			return nil
+		}
+
+		if text.Valid {
+			msg.Text = text.String
+		}
+		if mediaType.Valid {
+			msg.MediaType = int(mediaType.Int64)
+		}
+		if replyTo.Valid {
+			msg.ReplyToMessageID = replyTo.String
+		}
+
+		result = &msg
+		return nil
+	})
 
 	if err != nil {
 		return nil, err
 	}
-
-	if text.Valid {
-		msg.Text = text.String
+	if resultErr != nil {
+		return nil, resultErr
 	}
-	if mediaType.Valid {
-		msg.MediaType = int(mediaType.Int64)
-	}
-	if replyTo.Valid {
-		msg.ReplyToMessageID = replyTo.String
+	if result == nil {
+		return nil, sql.ErrNoRows
 	}
 
-	// Load reactions
-	reactions, err := ms.GetReactionsByMessageID(msg.MessageID)
+	// Load reactions outside transaction to avoid nested runSync
+	reactions, err := ms.GetReactionsByMessageID(result.MessageID)
 	if err == nil {
-		msg.Reactions = reactions
+		result.Reactions = reactions
 	}
 
 	// Populate Info for frontend compatibility
-	msg.Info = DecodedMessageInfo{
-		ID:        msg.MessageID,
-		Timestamp: time.Unix(msg.Timestamp, 0).Format(time.RFC3339),
-		IsFromMe:  msg.IsFromMe,
+	result.Info = DecodedMessageInfo{
+		ID:        result.MessageID,
+		Timestamp: time.Unix(result.Timestamp, 0).Format(time.RFC3339),
+		IsFromMe:  result.IsFromMe,
 		PushName:  "",
-		Sender:    msg.SenderJID,
-		Chat:      msg.ChatJID,
+		Sender:    result.SenderJID,
+		Chat:      result.ChatJID,
 	}
 
 	// Populate Content for frontend rendering
-	msg.Content = ms.buildDecodedContent(&msg)
+	result.Content = ms.buildDecodedContent(result)
 
-	return &msg, nil
+	return result, nil
 }
 
 // GetDecodedChatList returns the chat list from messages.db with the latest message for each chat
