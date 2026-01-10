@@ -262,13 +262,7 @@ function SearchBar({ value, onChange }: { value: string; onChange: (v: string) =
   )
 }
 
-function ProfileCard({
-  profile,
-  avatar,
-}: {
-  profile: api.Contact | null
-  avatar?: string | null
-}) {
+function ProfileCard({ profile, avatar }: { profile: api.Contact | null; avatar?: string | null }) {
   return (
     <div className="px-4 py-3 hover:bg-gray-100 dark:hover:bg-dark-tertiary cursor-pointer flex items-center">
       <div className="w-12 h-12 rounded-full overflow-hidden mr-4 bg-gray-300 dark:bg-gray-600 flex items-center justify-center">
@@ -281,9 +275,7 @@ function ProfileCard({
         )}
       </div>
       <div>
-        <h3 className="text-light-text dark:text-dark-text font-medium">
-          {profile?.push_name}
-        </h3>
+        <h3 className="text-light-text dark:text-dark-text font-medium">{profile?.push_name}</h3>
         <p className="text-sm text-gray-500 dark:text-gray-400">{profile?.jid}</p>
       </div>
     </div>
