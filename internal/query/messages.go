@@ -89,7 +89,7 @@ const (
 	`
 
 	SelectMessageByChatAndID = `
-	SELECT message_id, chat_jid, sender_jid, timestamp, is_from_me, text, reply_to_message_id, edited, forwarded
+	SELECT sender_jid, timestamp, is_from_me, text, has_media, reply_to_message_id, edited, forwarded
 	FROM messages
 	WHERE chat_jid = ? AND message_id = ?
 	LIMIT 1

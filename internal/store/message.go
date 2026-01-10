@@ -438,7 +438,7 @@ func (ms *MessageStore) InsertMessage(info *types.MessageInfo, msg *waE2E.Messag
 		height = int(msg.GetStickerMessage().GetHeight())
 	default:
 		if text == "" {
-			log.Printf("Unknown message content: %+v\n", msg)
+			// log.Printf("Unknown message content: %+v\n", msg)
 			return nil
 		}
 	}
@@ -524,7 +524,7 @@ func (ms *MessageStore) UpdateMessageContent(messageID string, content *waE2E.Me
 		width = int(content.GetStickerMessage().GetWidth())
 		height = int(content.GetStickerMessage().GetHeight())
 	default:
-		log.Printf("Unknown message content for update: %+v\n", content)
+		// log.Printf("Unknown message content for update: %+v\n", content)
 		return nil
 	}
 
@@ -581,6 +581,7 @@ func (ms *MessageStore) GetMessageWithMedia(chatJID string, messageID string) (*
 	)
 
 	if err != nil {
+		log.Println("GetMessageWithMedia error:", err)
 		return nil, err
 	}
 
@@ -612,6 +613,7 @@ func (ms *MessageStore) GetMessageWithMedia(chatJID string, messageID string) (*
 			&height,
 		)
 		if err != nil {
+			log.Println("GetMessageWithMedia media query error:", err)
 			return nil, err
 		}
 		media = wa.NewMedia(
@@ -804,8 +806,6 @@ func (ms *MessageStore) GetChatList() []ChatMessage {
 		ms.chatListMap.Set(jid.User, chatMsg)
 		chatList = append(chatList, chatMsg)
 	}
-	fmt.Println(chatList)
-
 	return chatList
 }
 

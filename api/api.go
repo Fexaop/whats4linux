@@ -453,6 +453,7 @@ func (a *Api) SendMessage(chatJID string, content MessageContent) (string, error
 	case "text":
 		contextInfo, err := a.buildQuotedContext(parsedJID, content.QuotedMessageID)
 		if err != nil {
+			log.Println("Failed to build quoted context:", err)
 			return "", err
 		}
 
@@ -626,6 +627,7 @@ func (a *Api) SendMessage(chatJID string, content MessageContent) (string, error
 
 	resp, err := a.waClient.SendMessage(a.ctx, parsedJID, msgContent)
 	if err != nil {
+		log.Println("SendMessage error:", err)
 		return "", err
 	}
 
