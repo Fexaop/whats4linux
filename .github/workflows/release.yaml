@@ -1,5 +1,8 @@
 name: Release
 
+permissions:
+  contents: write
+
 on:
   workflow_dispatch:
   schedule:
@@ -58,7 +61,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.25"
+          go-version: "1.26"
 
       - name: Install Wails
         run: |
@@ -69,6 +72,7 @@ jobs:
         shell: bash
         run: |
           cd systray
+          go mod tidy
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
             go build -o whats4linux_tray.exe .
           else
