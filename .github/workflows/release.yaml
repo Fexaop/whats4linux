@@ -14,6 +14,7 @@ env:
 
 jobs:
   build:
+    if: github.event_name != 'schedule' || github.sha != vars.LAST_NIGHTLY_SHA
     strategy:
       fail-fast: true
       matrix:
@@ -141,3 +142,8 @@ jobs:
           name: Nightly Build
           prerelease: true
           files: dist/**/*
+
+      - name: Record last built commit hash, for not making redundant nightly builds
+        run: gh variable set LAST_NIGHTLY_SHA --body "${{ github.sha }}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
