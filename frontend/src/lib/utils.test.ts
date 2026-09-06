@@ -143,7 +143,15 @@ describe("formatDateSeparator", () => {
     const threeDaysAgo = new Date(Date.now() - 3 * 86400000)
     const iso = `${threeDaysAgo.getFullYear()}-${String(threeDaysAgo.getMonth() + 1).padStart(2, "0")}-${String(threeDaysAgo.getDate()).padStart(2, "0")}`
     const result = formatDateSeparator(iso)
-    expect([ "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday" ]).toContain(result)
+    expect([
+      "Monday",
+      "Tuesday",
+      "Wednesday",
+      "Thursday",
+      "Friday",
+      "Saturday",
+      "Sunday",
+    ]).toContain(result)
   })
 
   it("returns locale date for older dates", () => {

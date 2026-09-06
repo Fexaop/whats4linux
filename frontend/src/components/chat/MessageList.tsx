@@ -47,9 +47,7 @@ const ListHeader: Components<RowItem, ListContext>["Header"] = ({ context: ctx }
     </div>
   ) : null
 
-const ListFooter: Components<RowItem, ListContext>["Footer"] = () => (
-  <div className="h-2" />
-)
+const ListFooter: Components<RowItem, ListContext>["Footer"] = () => <div className="h-2" />
 
 const listComponents: Components<RowItem, ListContext> = {
   Header: ListHeader,
@@ -138,7 +136,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
       atBottomStateChange={atBottom => onAtBottomChange?.(atBottom)}
       followOutput={atBottom => (atBottom ? "auto" : false)}
       computeItemKey={(_i, r) =>
-        isSep(r) ? r.key : (r as store.DecodedMessage).Info?.ID ?? String(_i)
+        isSep(r) ? r.key : ((r as store.DecodedMessage).Info?.ID ?? String(_i))
       }
       context={{ isLoading }}
       components={listComponents}

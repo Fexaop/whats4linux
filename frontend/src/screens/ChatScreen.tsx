@@ -17,7 +17,12 @@ import { useChatMuted } from "../store/useMuteStore"
 import type { ChatItem } from "../store/types"
 import { StatusList, StoryViewer, type StatusGroup } from "../components/chat/Status"
 import { CommunityList, CommunityHome, CommunitiesWelcome } from "../components/chat/Communities"
-import { getAvatarColor, AVATAR_ICON_COLOR, AVATAR_ICON_ON_DARK, formatChatTimestamp } from "../lib/utils"
+import {
+  getAvatarColor,
+  AVATAR_ICON_COLOR,
+  AVATAR_ICON_ON_DARK,
+  formatChatTimestamp,
+} from "../lib/utils"
 import { useAppSettingsStore } from "../store/useAppSettingsStore"
 import {
   UserAvatar,
