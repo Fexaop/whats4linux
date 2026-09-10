@@ -921,6 +921,7 @@ func (ms *MessageStore) GetMessageWithMediaByID(messageID string) (*ExtendedMess
 			fileSHA256    []byte
 			fileEncSHA256 []byte
 			width, height int
+			fileName      sql.NullString
 		)
 		err = ms.db.QueryRow(query.SelectMessageMediaByMessageID, messageID).Scan(
 			&mediaType,
@@ -932,6 +933,7 @@ func (ms *MessageStore) GetMessageWithMediaByID(messageID string) (*ExtendedMess
 			&fileEncSHA256,
 			&width,
 			&height,
+			&fileName,
 		)
 		if err != nil {
 			return nil, err
@@ -1598,6 +1600,10 @@ func (ms *MessageStore) GetThumbnail(messageID string) []byte {
 		return nil
 	}
 	return thumb
+}
+
+func (ms *MessageStore) CacheThumbnail(messageID string, data []byte) {
+	_, _ = ms.db.Exec(query.UpdateThumbnailByMessageID, data, messageID)
 }
 
 // LinkPreview is the stored preview for a URL in a text message.
