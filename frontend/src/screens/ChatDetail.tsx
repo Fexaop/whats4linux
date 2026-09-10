@@ -8,6 +8,7 @@ import {
   GetProfile,
   MarkRead,
 } from "../../wailsjs/go/api/Api"
+import { preloadImages } from "../components/chat/MediaContent"
 import { store } from "../../wailsjs/go/models"
 import { EventsOn } from "../../wailsjs/runtime/runtime"
 import { useMessageStore, useUIStore, useChatStore } from "../store"
@@ -233,6 +234,7 @@ export function ChatDetail({ chatId, chatName, chatAvatar, onBack }: ChatDetailP
           }
         }
         setMessages(chatId, merged)
+        preloadImages(merged.map(m => m.Info.ID))
         const more = loadedMsgs.length >= PAGE_SIZE
         hasMoreRef.current = more
         setHasMore(more)
@@ -276,6 +278,7 @@ export function ChatDetail({ chatId, chatName, chatAvatar, onBack }: ChatDetailP
           // generation; a response from an abandoned chat cannot move this list.
           setFirstItemIndex(prev => prev - msgs.length)
           prependMessages(chatId, msgs)
+          preloadImages(msgs.map(m => m.Info.ID))
         }
         const more = msgs.length >= PAGE_SIZE
         hasMoreRef.current = more
@@ -415,7 +418,14 @@ export function ChatDetail({ chatId, chatName, chatAvatar, onBack }: ChatDetailP
         },
       }
     } else if (fileToSend) {
-      if (fileTypeToSend === "image") {
+      if (fileTypeToSend === "sticker") {
+        pendingMessage.Content = {
+          stickerMessage: {
+            mimetype: fileToSend.type,
+            _tempFile: fileToSend,
+          },
+        }
+      } else if (fileTypeToSend === "image") {
         pendingMessage.Content = {
           imageMessage: {
             caption: textToSend || "",
@@ -477,6 +487,8 @@ export function ChatDetail({ chatId, chatName, chatAvatar, onBack }: ChatDetailP
         pendingMessage.Content.audioMessage.contextInfo = contextInfo
       } else if (pendingMessage.Content.documentMessage) {
         pendingMessage.Content.documentMessage.contextInfo = contextInfo
+      } else if (pendingMessage.Content.stickerMessage) {
+        pendingMessage.Content.stickerMessage.contextInfo = contextInfo
       }
     }
 
@@ -797,9 +809,11 @@ export function ChatDetail({ chatId, chatName, chatAvatar, onBack }: ChatDetailP
               setSelectedFile(file)
               const generalType = file.type.split("/")[0]
               setSelectedFileType(
-                generalType === "image" || generalType === "video" || generalType === "audio"
-                  ? generalType
-                  : "document",
+                file.type === "image/webp"
+                  ? "sticker"
+                  : generalType === "image" || generalType === "video" || generalType === "audio"
+                    ? generalType
+                    : "document",
               )
             }
           }}

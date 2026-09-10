@@ -59,4 +59,8 @@ const (
 	FROM message_media
 	WHERE message_id = ?;
 	`
+
+	UpdateThumbnailByMessageID = `
+	UPDATE message_media SET thumbnail = ? WHERE message_id = ?;
+	`
 )

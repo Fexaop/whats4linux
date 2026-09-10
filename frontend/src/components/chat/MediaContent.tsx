@@ -1,6 +1,12 @@
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useCallback, use } from "react"
 import { store } from "../../../wailsjs/go/models"
-import { GetCachedImage, DownloadMedia, GetVideoThumbnail } from "../../../wailsjs/go/api/Api"
+import {
+  GetCachedImage,
+  GetCachedImages,
+  DownloadMedia,
+  GetVideoThumbnail,
+  GetImageThumbnail,
+} from "../../../wailsjs/go/api/Api"
 import { useUIStore } from "../../store"
 import { LRUCache } from "../../lib/lruCache"
 
@@ -21,6 +27,7 @@ const MEDIA_MAX_H = 400
 // lifetime of the process.
 const imagePathCache = new LRUCache<string, string>(48, 32 * 1024 * 1024, value => value.length)
 const videoThumbCache = new LRUCache<string, string>(100, 16 * 1024 * 1024, value => value.length)
+const imageThumbCache = new LRUCache<string, string>(100, 8 * 1024 * 1024, value => value.length)
 const mediaRequests = new Map<string, Promise<string>>()
 
 function loadMediaOnce(key: string, loader: () => Promise<string>): Promise<string> {
@@ -31,6 +38,24 @@ function loadMediaOnce(key: string, loader: () => Promise<string>): Promise<stri
   })
   mediaRequests.set(key, request)
   return request
+}
+
+let preloadInFlight: Promise<void> | null = null
+export function preloadImages(ids: string[]) {
+  if (ids.length === 0) return
+  const uncached = ids.filter(id => !imagePathCache.has(id) && !mediaRequests.has(`image:${id}`))
+  if (uncached.length === 0) return
+  if (preloadInFlight) return
+  preloadInFlight = GetCachedImages(uncached)
+    .then(map => {
+      for (const [id, dataUrl] of Object.entries(map)) {
+        if (dataUrl) imagePathCache.set(id, dataUrl)
+      }
+    })
+    .catch(() => {})
+    .finally(() => {
+      preloadInFlight = null
+    })
 }
 
 // Fallback box for GIF videos whose dimensions were never stored (rows synced
@@ -88,11 +113,15 @@ export function MediaContent({
   const [thumbnailSrc, setThumbnailSrc] = useState<string | null>(
     () => videoThumbCache.get(message.Info.ID) ?? null,
   )
+  const [imageThumbnailSrc, setImageThumbnailSrc] = useState<string | null>(
+    () => imageThumbCache.get(message.Info.ID) ?? null,
+  )
   const loadingRef = useRef(false)
   const mountedRef = useRef(true)
   const gifLoopsRef = useRef(0)
   const placeholderRef = useRef<HTMLDivElement | null>(null)
   const openLightbox = useUIStore(s => s.openLightbox)
+  const handleDownloadRef = useRef<(() => void) | null>(null)
 
   // Reserve the final layout box before the media loads. Only images and GIF
   // videos swap a placeholder for an inline element, so only they can shift.
@@ -103,7 +132,7 @@ export function MediaContent({
         (type === "image" ? IMAGE_FALLBACK_BOX : GIF_FALLBACK_BOX))
       : null
 
-  const handleDownload = async () => {
+  const handleDownload = useCallback(async () => {
     if (loadingRef.current) return
     loadingRef.current = true
     setLoading(true)
@@ -126,7 +155,9 @@ export function MediaContent({
       loadingRef.current = false
       if (mountedRef.current) setLoading(false)
     }
-  }
+  }, [type, chatId, isGif, message.Info.ID])
+
+  handleDownloadRef.current = () => void handleDownload()
 
   // Regular videos play full-screen in the lightbox (keeps the chat thumbnail).
   // The downloaded data URL is cached in a ref so reopening doesn't re-download.
@@ -190,7 +221,7 @@ export function MediaContent({
     const obs = new IntersectionObserver(
       ([entry]) => {
         if (entry.isIntersecting) {
-          timer = setTimeout(() => void handleDownload(), 200)
+          timer = setTimeout(() => handleDownloadRef.current?.(), 200)
         } else if (timer) {
           clearTimeout(timer)
           timer = undefined
@@ -224,6 +255,21 @@ export function MediaContent({
   }, [type, isGif, mediaSrc, thumbnailSrc, message.Info.ID])
 
   useEffect(() => {
+    if (type !== "image" || mediaSrc || imageThumbnailSrc) return
+    let cancelled = false
+    GetImageThumbnail(message.Info.ID)
+      .then(url => {
+        if (!url) return
+        imageThumbCache.set(message.Info.ID, url)
+        if (!cancelled) setImageThumbnailSrc(url)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [type, mediaSrc, imageThumbnailSrc, message.Info.ID])
+
+  useEffect(() => {
     // Cleanup blob URLs when component unmounts or mediaSrc changes
     return () => {
       if (mediaSrc?.startsWith("blob:")) {
@@ -237,7 +283,7 @@ export function MediaContent({
       return (
         <div
           className="relative inline-block"
-          onMouseEnter={() => type === "image" && setShowDownloadButton(true)}
+          onMouseEnter={() => setShowDownloadButton(true)}
           onMouseLeave={() => setShowDownloadButton(false)}
         >
           <img
@@ -245,20 +291,16 @@ export function MediaContent({
             className={
               type === "image"
                 ? "block min-w-75 max-w-82.5 max-h-100 object-cover rounded-lg cursor-pointer"
-                : "object-contain w-48.75 h-48.75"
+                : "object-contain w-48.75 h-48.75 cursor-pointer"
             }
             // Same explicit box as the placeholder -> zero layout shift.
             style={type === "image" ? (reservedBox ?? undefined) : undefined}
             decoding="async"
             alt="media"
-            onClick={
-              type === "image"
-                ? () => {
-                    onImageClick?.(mediaSrc)
-                    openLightbox(mediaSrc)
-                  }
-                : undefined
-            }
+            onClick={() => {
+              onImageClick?.(mediaSrc)
+              openLightbox(mediaSrc)
+            }}
           />
           {type === "image" && showDownloadButton && onDownload && (
             <button
@@ -306,6 +348,43 @@ export function MediaContent({
         <video src={mediaSrc} controls className="block w-64 h-64 rounded-lg object-cover" />
       )
     if (type === "audio") return <audio src={mediaSrc} controls className="w-75 h-14" />
+  }
+
+  if (type === "image" && imageThumbnailSrc) {
+    return (
+      <div
+        ref={placeholderRef}
+        className="relative w-64 h-64 bg-gray-200 dark:bg-gray-800 rounded-lg flex items-center justify-center overflow-hidden"
+        style={reservedBox ?? IMAGE_FALLBACK_BOX}
+      >
+        <img
+          src={imageThumbnailSrc}
+          className="w-full h-full object-cover rounded-lg"
+          decoding="async"
+          alt="media"
+          onClick={() => void handleDownload()}
+        />
+        {loading && (
+          <div className="absolute inset-0 bg-black/40 flex items-center justify-center rounded-lg">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white" />
+          </div>
+        )}
+        {showDownloadButton && onDownload && !loading && (
+          <button
+            onClick={e => {
+              e.stopPropagation()
+              void handleDownload().then(() => onDownload())
+            }}
+            className="absolute top-2 right-2 p-2 bg-black/70 hover:bg-black/90 rounded-full text-white transition-colors"
+            title="Download image"
+          >
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+              <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" />
+            </svg>
+          </button>
+        )}
+      </div>
+    )
   }
 
   // Video placeholder: show the embedded thumbnail (if any) with a play button

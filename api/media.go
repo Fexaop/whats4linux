@@ -1,14 +1,19 @@
 package api
 
 import (
+	"bytes"
 	"encoding/base64"
 	"fmt"
+	"image"
+	"image/jpeg"
+	"image/png"
 	"io"
 	"log"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/gen2brain/beeep"
 	"github.com/lugvitc/whats4linux/internal/store"
@@ -84,6 +89,74 @@ func (a *Api) GetVideoThumbnail(messageID string) string {
 		return ""
 	}
 	return "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(thumb)
+}
+
+func (a *Api) GetImageThumbnail(messageID string) string {
+	if a.messageStore == nil {
+		return ""
+	}
+	thumb := a.messageStore.GetThumbnail(messageID)
+	if len(thumb) > 0 {
+		return "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(thumb)
+	}
+	if a.imageCache == nil {
+		return ""
+	}
+	data, mime, err := a.imageCache.ReadImageByMessageID(messageID)
+	if err != nil || len(data) == 0 {
+		return ""
+	}
+	thumbData := generateThumbnail(data, mime)
+	if len(thumbData) == 0 {
+		return ""
+	}
+	a.messageStore.CacheThumbnail(messageID, thumbData)
+	return "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(thumbData)
+}
+
+func generateThumbnail(data []byte, mime string) []byte {
+	img, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		if mime == "image/png" {
+			img, err = png.Decode(bytes.NewReader(data))
+		}
+		if err != nil {
+			return nil
+		}
+	}
+	bounds := img.Bounds()
+	srcW := bounds.Dx()
+	srcH := bounds.Dy()
+	if srcW <= 0 || srcH <= 0 {
+		return nil
+	}
+	const maxDim = 320
+	scale := float64(maxDim) / float64(srcW)
+	if srcH > srcW {
+		scale = float64(maxDim) / float64(srcH)
+	}
+	if scale >= 1 {
+		var buf bytes.Buffer
+		if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 60}); err != nil {
+			return nil
+		}
+		return buf.Bytes()
+	}
+	dstW := int(float64(srcW) * scale)
+	dstH := int(float64(srcH) * scale)
+	dst := image.NewRGBA(image.Rect(0, 0, dstW, dstH))
+	for y := 0; y < dstH; y++ {
+		srcY := bounds.Min.Y + y*srcH/dstH
+		for x := 0; x < dstW; x++ {
+			srcX := bounds.Min.X + x*srcW/dstW
+			dst.Set(x, y, img.At(srcX, srcY))
+		}
+	}
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, dst, &jpeg.Options{Quality: 60}); err != nil {
+		return nil
+	}
+	return buf.Bytes()
 }
 
 func (a *Api) DownloadMedia(chatJID string, messageID string) (string, error) {
@@ -340,11 +413,27 @@ func getFileExtension(mime string) string {
 	}
 }
 
-// DownloadImageToFile downloads an image from cache to the Downloads folder
 func (a *Api) DownloadImageToFile(messageID string) error {
 	data, mime, err := a.imageCache.ReadImageByMessageID(messageID)
 	if err != nil {
-		return err
+		dataURL, fetchErr := a.GetCachedImage(messageID)
+		if fetchErr != nil || dataURL == "" {
+			return fmt.Errorf("image not available: %v", fetchErr)
+		}
+		if after, ok := strings.CutPrefix(dataURL, "data:"); ok {
+			mimePart, b64Part, _ := strings.Cut(after, ";base64,")
+			if b64Part != "" {
+				mime = mimePart
+				decoded, decErr := base64.StdEncoding.DecodeString(b64Part)
+				if decErr != nil {
+					return fmt.Errorf("failed to decode cached image: %w", decErr)
+				}
+				data = decoded
+			}
+		}
+		if len(data) == 0 {
+			return fmt.Errorf("image not available")
+		}
 	}
 
 	homeDir, _ := os.UserHomeDir()
