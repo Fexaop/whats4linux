@@ -8,7 +8,7 @@ import {
   GetProfile,
   MarkRead,
 } from "../../wailsjs/go/api/Api"
-import { preloadImages } from "../components/chat/MediaContent"
+import { preloadImages, visibleImageIDs } from "../components/chat/MediaContent"
 import { store } from "../../wailsjs/go/models"
 import { EventsOn } from "../../wailsjs/runtime/runtime"
 import { useMessageStore, useUIStore, useChatStore } from "../store"
@@ -234,7 +234,7 @@ export function ChatDetail({ chatId, chatName, chatAvatar, onBack }: ChatDetailP
           }
         }
         setMessages(chatId, merged)
-        preloadImages(merged.map(m => m.Info.ID))
+        preloadImages(visibleImageIDs(merged))
         const more = loadedMsgs.length >= PAGE_SIZE
         hasMoreRef.current = more
         setHasMore(more)
@@ -278,7 +278,6 @@ export function ChatDetail({ chatId, chatName, chatAvatar, onBack }: ChatDetailP
           // generation; a response from an abandoned chat cannot move this list.
           setFirstItemIndex(prev => prev - msgs.length)
           prependMessages(chatId, msgs)
-          preloadImages(msgs.map(m => m.Info.ID))
         }
         const more = msgs.length >= PAGE_SIZE
         hasMoreRef.current = more
@@ -624,7 +623,12 @@ export function ChatDetail({ chatId, chatName, chatAvatar, onBack }: ChatDetailP
             const pendingMessages = currentMessages.filter((m: any) => m.isPending)
             const pending = pendingMessages.find((m: any) => m.tempId === data.clientTempId)
             if (pending) {
-              for (const body of ["imageMessage", "videoMessage", "audioMessage"]) {
+              for (const body of [
+                "imageMessage",
+                "videoMessage",
+                "audioMessage",
+                "stickerMessage",
+              ]) {
                 const transient =
                   pending.Content?.[body]?._tempImage || pending.Content?.[body]?._tempFile
                 if (transient && data.message.Content?.[body]) {
@@ -809,11 +813,9 @@ export function ChatDetail({ chatId, chatName, chatAvatar, onBack }: ChatDetailP
               setSelectedFile(file)
               const generalType = file.type.split("/")[0]
               setSelectedFileType(
-                file.type === "image/webp"
-                  ? "sticker"
-                  : generalType === "image" || generalType === "video" || generalType === "audio"
-                    ? generalType
-                    : "document",
+                generalType === "image" || generalType === "video" || generalType === "audio"
+                  ? generalType
+                  : "document",
               )
             }
           }}
@@ -821,6 +823,7 @@ export function ChatDetail({ chatId, chatName, chatAvatar, onBack }: ChatDetailP
             setSelectedFile(null)
             setPastedImage(null)
           }}
+          onFileTypeChange={setSelectedFileType}
           onEmojiClick={emoji => {
             setInputText(prev => prev + emoji)
             setShowEmojiPicker(false)
